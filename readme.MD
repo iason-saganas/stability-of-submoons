@@ -6,5 +6,5 @@ In this code, we numerically integrate the equations of motions governing the ti
 
 ## Differential Equations for Orbit and Spin Frequencies
 
-![App Screenshot](https://raw.githubusercontent.com/iason-saganas/Stability-Of-Submoons/main/media/Screenshot%20of%20DFE.png)
+![App Screenshot](https://raw.githubusercontent.com/iason-saganas/stability-of-submoons/master/media/Screenshot%20of%20DFE.png)
 
