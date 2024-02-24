@@ -46,7 +46,7 @@ equation is a source of stiffness, i.e. causes numerical problems.
 
 '''
 
-
+toy_satellite, toy_planet = create_toy_satellite_and_planet()
 
 
 """

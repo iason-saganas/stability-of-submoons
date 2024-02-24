@@ -1,11 +1,13 @@
-from helper_classes import CelestialBody
 import numpy as np
 from scipy.constants import G
 from warnings import warn as raise_warning
+import pandas as pd
+from typing import Union
 
 __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from_n', 'get_standard_grav_parameter',
            'get_hill_radius_relevant_to_body', 'get_critical_semi_major_axis', 'get_roche_limit',
-           'analytical_lifetime_one_tide']
+           'analytical_lifetime_one_tide', 'dont', 'get_solar_system_planets_data','create_toy_satellite_and_planet',
+           'CelestialBody']
 
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
@@ -153,7 +155,7 @@ def get_roche_limit(hosted_body: 'CelestialBody') -> float:
     return a_l
 
 
-def analytical_lifetime_one_tide(a_0, a_i, hosted_body):
+def analytical_lifetime_one_tide(a_0: float, a_i: float, hosted_body: 'CelestialBody') -> float:
     """
     Calculates the time it takes for the semi-major-axis to reach `a_i` ,starting from `a_0` using the inputted set of
     parameters describing the system. This represents the analytical formula for the lifetime T in a one-tide-system,
@@ -174,3 +176,193 @@ def analytical_lifetime_one_tide(a_0, a_i, hosted_body):
     right_hand_side = 3 * i.k / i.Q * (G/i.m)**(1/2) * i.R**5 * j.m
     T = left_hand_side / right_hand_side
     return T
+
+def dont():
+    """
+    Do nothing function.
+    """
+    pass
+
+
+def get_solar_system_planets_data(planet_name: str = '', physical_property: str = '', print_return: bool = False) \
+        -> Union[tuple, float]:
+    """
+    Reads the file contents 'constants/planets_solar_system.txt'.
+    If `planet_name` is provided, data for that planet will be returned and can then be accessed via tuple unpacking,
+    mass, semi_major_axis, etc... = get_solar_system_planets_data(signature).
+    If `planet_name` and `physical_property` is provided, a float will be returned that represent the queried
+    physical property.
+
+    :param planet_name: str,        One of: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus or Neptune.
+    :param physical_property: str,  One of: Mass, Semi-major-axis, Diameter, Orbital-Period, Orbital-eccentricity,
+                                            Density, Rotation-Period.
+    :param print_return: bool,      Print what is returned.
+    """
+    df = pd.read_csv('constants/planets_solar_system.txt')
+    whole_row_mode = (planet_name != '' and physical_property == '')
+    specific_value_mode = (planet_name != '' and physical_property != '')
+    if whole_row_mode:
+        row = df[df['Planet'] == planet_name]
+        row_nice_representation = row.iloc[0]
+        res = tuple(row_nice_representation)
+        print(row_nice_representation) if print_return else dont()
+        return res
+    elif specific_value_mode:
+        row = df[df['Planet'] == planet_name]
+        row_nice_representation = row.iloc[0]
+        all_column_names = df.columns.tolist()
+        user_short_hand = physical_property
+        selected_index = 0
+        for index, column_name in enumerate(all_column_names):
+            if user_short_hand in column_name:
+                selected_index = index
+                break
+        res = row_nice_representation[all_column_names[selected_index]]
+        print(res) if print_return else dont()
+        return res
+    else:
+        print(df)
+
+
+print(get_solar_system_planets_data(planet_name='Earth',print_return=True))
+
+
+def create_toy_satellite_and_planet():
+    (name_earth, m_earth, a_earth, diameter_earth, orbital_period_earth, eccentricity_earth, density_earth,
+     rotation_period_earth) = get_solar_system_planets_data('Earth')
+    spin_frequency_earth = 1/(3600 * rotation_period_earth)
+
+    toy_planet = CelestialBody(mass=m_earth,density=density_earth, semi_major_axis=None, spin_frequency=spin_frequency_earth,
+                               love_number=)
+    pass
+
+
+class CelestialBody:
+    """
+    Base class representing a celestial body with its various properties set as class attributes.
+
+    Because a parameter 'hosting_body' is needed, when defining all celestial bodies, the star is the very
+    first body that needs to be instantiated such that it can be passed as a parameter to the planet, which in turn
+    can be passed to the moon's definition etc.
+
+    On instantiation, the parameters `semi_major_axis` and `spin_frequency` should represent the initial values.
+
+    Attributes:
+    ----------------
+
+    :parameter mass:                float,          Body's mass.
+    :parameter density:             float,          The body's mean density.
+    :parameter semi_major_axis:     Union[float, None],   Value for the semi-major-axis. On instantiation, this should be the
+                                                    semi-major-axis initial value `a_0` and may then be updated through
+                                                    the method 'update_semi_major_axis'.
+    :parameter spin_frequency:      float,          Value for the spin-frequency. On instantiation, this should be the
+                                                    spin-frequency initial value `omega_0` and may then be updated
+                                                    through the method 'update_spin_frequency'.
+    :parameter love_number:         float,          The second tidal love number associated with the body's rheology.
+    :parameter quality_factor:      float,          The quality factor associated with the body's rheology.
+    :parameter descriptive_index:   str,            A descriptive index shorthand for the body, e.g. "sm" for submoon.
+    :parameter name:                str,            The name for the body, e.g. "submoon".
+    :parameter hierarchy_number:    int,            The hierarchy number corresponding to the body's position in the
+                                                    nested body system. 1 for star, 2 for planet, 3 for moon,
+                                                    4 for submoon.
+    :parameter hosting_body:        Union[float, None],  The body that `self` orbits, i.e. the hosting body.
+
+    Methods:
+    ----------------
+    update_semi_major_axis_a:       Updates the semi-major-axis based on a value.
+    update_spin_frequency_omega:    Updates the spin-frequency based on a value.
+                                    semi-major-axis. After initialization, `self.n` can be used instead.
+                                    `self` and its hosts as specified by `self.hosting_body`
+
+
+    Properties
+    (Can be accessed via dot notation of a class instance like attributes but are defined via a distinct class method
+    instead of inside `__init__()`) :
+    ----------------
+    n:                              The current orbit-frequency calculated from the current semi-major-axis using
+                                    Kepler's Third Law.
+    mu:                             The standard gravitational parameter between `self` and the body that `self` orbits,
+                                    specified by `self.hosting_body`.
+
+    """
+
+    def __init__(self, mass: float, density: float, semi_major_axis: Union[float, None], spin_frequency: float, love_number: float,
+                 quality_factor: float, descriptive_index: str, name: str, hierarchy_number: int,
+                 hosting_body: Union['CelestialBody', None]):
+        self.mass = mass
+        self.rho = density
+        self.omega = spin_frequency
+        self.k = love_number
+        self.Q = quality_factor
+        self.descriptive_index = descriptive_index
+        self.name = name
+        self.hn = hierarchy_number
+
+        if hierarchy_number == 1:
+            # Star has no hosting body.
+            self.hosting_body = None
+            self.a = None
+        else:
+            self.a = semi_major_axis
+            try:
+                check_if_direct_orbits(hosting_body=hosting_body, hosted_body=self)
+                self.hosting_body = hosting_body
+            except ValueError as err:
+                raise ValueError(f"The hosting body's hierarchy number does not match with the hierarchy number of "
+                                 f" the instantiated celestial body '{self.name}': Error message: ", err)
+
+    def update_semi_major_axis_a(self, update_value):
+        """
+        Updates the semi-major-axis of the celestial body.
+
+        :parameter update_value:    float,      The semi-major-axis value to update to.
+
+        """
+        self.a = update_value
+
+    def update_spin_frequency_omega(self, update_value):
+        """
+        Updates the spin-frequency of the celestial body.
+
+        :parameter update_value:    float,      The spin-frequency value to update to.
+
+        """
+        self.omega = update_value
+
+    @property
+    def n(self) -> float:
+        """
+        Uses Kepler's Third Law to get and return the current orbit frequency of the body `n` from the current
+        semi-major-axis `a`. For this, the body that hosts `self` is needed.
+        Since the `@property` decorator is used, this can be accessed like an attribute, `self.n`
+
+        :return orbit_frequency:    float,              The calculated orbit frequency.
+
+        """
+        n = keplers_law_n_from_a(hosting_body=self.hosting_body, hosted_body=self)
+        return n
+
+    @property
+    def mu(self) -> float:
+        """
+        Gets the standard gravitational parameter mu = G(m_1+m_2) where m_1 is self.m and m_2 is mass of the
+        hosting body.
+        No need to check whether hosting and hosted bodies are really in direct orbits of each other since this
+        was already checked in the initialization.
+        Since the `@property` decorator is used, this can be accessed like an attribute, `self.mu`
+
+        :return: mu:            float,              The calculated mu value.
+        """
+        return get_standard_grav_parameter(hosting_body=self.hosting_body, hosted_body=self, check_direct_orbits=False)
+
+    @property
+    def R(self) -> float:
+        """
+        Gets the mean circular radius of `self` based on its mass.
+        mass = rho * V  => V = mass / rho
+        r =  ( 3*V / (4*np.pi) ) **(1/3) = ( 3 * mass / rho / (4*np.pi) ) **(1/3)
+
+        :return: r:            float,              The calculated mean radius value.
+        """
+        r = (3 * self.mass / self.rho / (4 * np.pi)) ** (1 / 3)
+        return r
