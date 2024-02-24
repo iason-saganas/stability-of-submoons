@@ -1,6 +1,8 @@
 from utilities import keplers_law_n_from_a, check_if_direct_orbits, get_standard_grav_parameter
 import numpy as np
 
+__all__ = ['CelestialBody']
+
 
 class CelestialBody:
     """
@@ -16,7 +18,7 @@ class CelestialBody:
     ----------------
 
     :parameter mass:                float,          Body's mass.
-    :parameter density:                float,       The body's mean density.
+    :parameter density:             float,          The body's mean density.
     :parameter semi_major_axis:     float,          Value for the semi-major-axis. On instantiation, this should be the
                                                     semi-major-axis initial value `a_0` and may then be updated through
                                                     the method 'update_semi_major_axis'.

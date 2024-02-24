@@ -3,6 +3,10 @@ import numpy as np
 from scipy.constants import G
 from warnings import warn as raise_warning
 
+__all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from_n', 'get_standard_grav_parameter',
+           'get_hill_radius_relevant_to_body', 'get_critical_semi_major_axis', 'get_roche_limit',
+           'analytical_lifetime_one_tide']
+
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
     """
@@ -147,3 +151,26 @@ def get_roche_limit(hosted_body: 'CelestialBody') -> float:
     i = j.hosting_body
     a_l = j.R * (3 * i.mass / j.mass) ** (1 / 3)
     return a_l
+
+
+def analytical_lifetime_one_tide(a_0, a_i, hosted_body):
+    """
+    Calculates the time it takes for the semi-major-axis to reach `a_i` ,starting from `a_0` using the inputted set of
+    parameters describing the system. This represents the analytical formula for the lifetime T in a one-tide-system,
+    given by Murray and Dermott equation (4.213).
+
+    Let j represent the satellite and i its hosting body. Then,
+
+    T = 2/13 * a_0^(13/2) * ( 1-(a_i/a_0) ^ (13/2) ) * ( 3k_{2i} / Q_i * R_i^5 * m_j * (G/m_i)^(1/2) )^(-1)
+
+    :parameter a_0:         float,              The initial semi-major-axis of the satellite j.
+    :parameter a_i:         float,              The semi-major-axis value of j to evolve to.
+    :parameter hosted_body: CelestialBody,      The satellite j to evolve.
+    :return: T:             float,              The analytically calculated time it took for the evolution.
+    """
+    j = hosted_body
+    i = j.hosting_body
+    left_hand_side = 2/13 * a_0**(13/2)*(1-(a_i/a_0)**(13/2))
+    right_hand_side = 3 * i.k / i.Q * (G/i.m)**(1/2) * i.R**5 * j.m
+    T = left_hand_side / right_hand_side
+    return T

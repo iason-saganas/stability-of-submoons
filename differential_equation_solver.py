@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.constants import G
+from utilities import *
+from helper_classes import *
 
 '''
 Variables and functions naming conventions
@@ -39,4 +41,31 @@ mu_sm_m,
 
 for the submoon-moon system.
 
+First, we construct the solution of a moon planet system and check whether the sign function in the differential 
+equation is a source of stiffness, i.e. causes numerical problems. 
+
 '''
+
+
+
+
+"""
+So, I have to construct it like this: 
+
+y = [omega_1, omega_2, omega_3, ... a_1, a_s ... and so on] and then: 
+
+def derivative(t,y # time must come first, solution vector second): 
+    dydt = a list containing all derivatives of the variables in y (ordered of course) and the elements in y can be
+    accessed by indexing, 
+    i.e. omega_1, omega_2, omega_3, ... a_1, a_s ... and so on = y 
+    deriv 1 = some function of omega_1 and a_1
+    deriv 2 = some function of omega_2 and omega_3 or someting 
+    and then 
+    dydt = [deriv1, deriv2, ... etc.]
+    return dydt ! 
+    
+y_init = [initial value list for ] y
+
+    Good ressource: https://pundit.pratt.duke.edu/wiki/Python:Ordinary_Differential_Equations/Examples
+
+"""
