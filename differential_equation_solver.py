@@ -37,7 +37,7 @@ def derivative(t, y):
     in that order. See the equations at https://github.com/iason-saganas/stability-of-submoons/ .
     """
     # Tuple-Unpack the variables to track
-    a_m_sm, a_p_m, a_s_p, omega_m, omega_m, omega_s = y
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
 
     # Convert the semi-major-axes into their corresponding orbit frequency. Necessary steps for signum function.
     n_m_sm = keplers_law_n_from_a_simple(a_m_sm, mu_m_sm)
@@ -51,7 +51,7 @@ def derivative(t, y):
 
     # Define the spin-frequency derivatives
     omega_m_dot = 0
-    omega_m_dot = 0
+    omega_p_dot = 0
     omega_s_dot = 0
 
     # Define and return the derivative vector
