@@ -1,0 +1,2 @@
+Body,Mass-(kg),Semi-major-axis-(m),Diameter-(m),Orbital-Period-(days),Orbital-eccentricity,Density-(kg/m^3),Rotation-Period-(hours),2nd-Tidal-Love-Number-(Estimate),Quality-factor-(Estimate)
+Sun,1.9885e+30,-,1392000000,-,-,1408,600,0.2,450.0
