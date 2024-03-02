@@ -10,7 +10,9 @@ __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from
            'get_roche_limit', 'analytical_lifetime_one_tide', 'dont', 'get_solar_system_bodies_data',
            'CelestialBody', 'turn_seconds_to_years', 'get_a_derivative_factors_experimental', 'get_a_factors',
            'get_omega_derivative_factors_experimental', 'get_omega_factors', 'unpack_solve_ivp_object',
-           'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'custom_experimental_plot']
+           'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'custom_experimental_plot',
+           'submoon_system_derivative', 'update_values', 'track_submoon_sm_axis_1', 'track_submoon_sm_axis_2',
+           'track_moon_sm_axis_1', 'track_moon_sm_axis_2']
 
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
@@ -556,7 +558,7 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
     2.  Are the distances between the bodies such that one body does not crash into the other?
     (3.  Not implemented: Does the system have basic gravitational stability? => Lagrangian Filter?)
 
-    If all the checks run successfully, nothing happens, else an exception is raised.
+    If all the checks run successfully, the system is returned, otherwise an exception is raised.
 
     :param planetary_system: List['CelestialBody'],        The list containing instances of 'CelestialBody' that make up
                                                            the planetary system. Does not have to be ordered.
@@ -571,6 +573,8 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
 
     If the semi-major-axes and spin-frequencies that are stored in the `CelestialBody` instances already represent the
     initial values, the parameter `initial_values` does not have to be provided.
+
+    :return planetary_system: list,                         The inputted planetary system, if all goes well.
 
     """
     if not use_initial_values:
@@ -623,6 +627,8 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
                     print(f"Distance ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} "
                           f"passed. \n"
                           f"            Detected semi-major-axis ratio: {distance_ratio}. Threshold: {a_ratio}.\n\n")
+
+    return planetary_system
 
 
 def custom_experimental_plot(time_points, solution, derivative):
@@ -694,3 +700,115 @@ def custom_experimental_plot(time_points, solution, derivative):
                      y=1.05)  # Adjust fontsize and y position as needed
     plt.tight_layout()
     plt.show()
+
+
+# Define system of differential equations
+def submoon_system_derivative(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    """
+    Calculates and returns the derivative vector dy_dt. The derivative vector contains the differential equations for
+
+    a_m_sm
+    a_p_m
+    a_s_p
+    omega_m
+    omega_p
+    omega_s
+
+    in that order. See the equations at https://github.com/iason-saganas/stability-of-submoons/ .
+    """
+    # Tuple-Unpack the variables to track
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+
+    # List unpack the celestial bodies of the system to access their pre-defined properties
+    star, planet, moon, submoon = planetary_system
+
+    # Convert the semi-major-axes into their corresponding orbit frequency. Necessary steps for signum function.
+    n_m_sm = keplers_law_n_from_a_simple(a_m_sm, mu_m_sm)
+    n_p_m = keplers_law_n_from_a_simple(a_p_m, mu_p_m)
+    n_s_p = keplers_law_n_from_a_simple(a_s_p, mu_s_p)
+
+    # Define the semi-major-axis derivatives
+    a_m_sm_dot = get_a_factors(submoon) * np.sign(omega_m - n_m_sm) * a_m_sm ** (-11 / 2)
+    a_p_m_dot = get_a_factors(moon) * np.sign(omega_p - n_p_m) * a_p_m ** (-11 / 2)
+    a_s_p_dot = get_a_factors(planet) * np.sign(omega_s - n_s_p) * a_s_p ** (-11 / 2)
+
+    # Define the spin-frequency derivatives
+    omega_m_dot = np.round(-get_omega_factors(moon) * (np.sign(omega_m - n_p_m) * planet.mass ** 2 * a_p_m ** (-6)
+                                              + np.sign(omega_m - n_m_sm) * submoon.mass ** 2 * a_m_sm ** (-6)), 10)
+    omega_p_dot = (- get_omega_factors(planet) * (np.sign(omega_p - n_s_p) * star.mass ** 2 * a_s_p ** (-6)
+                   + np.sign(omega_p - n_p_m) * moon.mass ** 2 * a_p_m ** (-6)))
+    omega_s_dot = - get_omega_factors(star) * np.sign(omega_s - n_s_p) * planet.mass ** 2 * a_s_p**(-6)
+
+    # Define and return the derivative vector
+    dy_dt = [a_m_sm_dot, a_p_m_dot, a_s_p_dot, omega_m_dot, omega_p_dot, omega_s_dot]
+    return dy_dt
+
+
+def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    """
+    Note
+    ----
+    Update semi-major-axes and spin-frequencies via class method. This is to be passed to the `events` argument
+    of `solve_ivp`.
+    Check if the Roche-Limit or Hill-Radius of the bodies is trespassed based on the updated semi-major-axis values.
+    If yes, terminate the program (terminal attribute set to True).
+    """
+    # track and update all relevant values
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+
+    # List unpack the celestial bodies of the system to access their pre-defined properties
+    star, planet, moon, submoon = planetary_system
+
+    star.update_spin_frequency_omega(omega_s)
+    planet.update_spin_frequency_omega(omega_p)
+    moon.update_spin_frequency_omega(omega_p)
+
+    planet.update_semi_major_axis_a(a_s_p)
+    moon.update_semi_major_axis_a(a_p_m)
+    submoon.update_semi_major_axis_a(a_m_sm)
+
+    # Use an infinity value, so to not actually activate the event
+    return omega_s-np.inf
+
+
+def track_submoon_sm_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Unpack all values
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+    # List unpack the celestial bodies of the system to access their pre-defined properties
+    star, planet, moon, submoon = planetary_system
+    rl = submoon.get_current_roche_limit()
+    return a_m_sm - rl
+
+
+def track_submoon_sm_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Unpack all values
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+    # List unpack the celestial bodies of the system to access their pre-defined properties
+    star, planet, moon, submoon = planetary_system
+    crit_a = submoon.get_current_critical_sm_axis()
+    return a_m_sm - crit_a
+
+
+def track_moon_sm_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Unpack all values
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+    # List unpack the celestial bodies of the system to access their pre-defined properties
+    star, planet, moon, submoon = planetary_system
+    rl = moon.get_current_roche_limit()
+    return a_p_m - rl
+
+
+def track_moon_sm_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Unpack all values
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+    # List unpack the celestial bodies of the system to access their pre-defined properties
+    star, planet, moon, submoon = planetary_system
+    crit_a = moon.get_current_critical_sm_axis()
+    return a_p_m - crit_a
+
+
+update_values.terminal = False
+track_submoon_sm_axis_1.terminal = True
+track_submoon_sm_axis_2.terminal = True
+track_moon_sm_axis_1.terminal = True
+track_moon_sm_axis_2.terminal = True
