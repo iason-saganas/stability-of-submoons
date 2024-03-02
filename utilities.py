@@ -2,13 +2,15 @@ import numpy as np
 from scipy.constants import G
 from warnings import warn as raise_warning
 import pandas as pd
-from typing import Union
+from typing import Union, List
+import matplotlib.pyplot as plt
 
 __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from_n', 'keplers_law_n_from_a_simple',
            'get_standard_grav_parameter', 'get_hill_radius_relevant_to_body', 'get_critical_semi_major_axis',
            'get_roche_limit', 'analytical_lifetime_one_tide', 'dont', 'get_solar_system_bodies_data',
            'CelestialBody', 'turn_seconds_to_years', 'get_a_derivative_factors_experimental', 'get_a_factors',
-           'unpack_solve_ivp_object']
+           'get_omega_derivative_factors_experimental', 'get_omega_factors', 'unpack_solve_ivp_object',
+           'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'custom_experimental_plot']
 
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
@@ -200,11 +202,25 @@ def dont():
 
 
 def get_solar_system_bodies_data(file_to_read: str, name_of_celestial_body: str = '', physical_property: str = '',
-                                 print_return: bool = False) -> Union[tuple, float]:
+                                 print_return: bool = False) -> Union['SpecialDict', float]:
     """
     Reads the file contents 'constants/planets_solar_system.txt'.
-    If `planet_name` is provided, data for that planet will be returned and can then be accessed via tuple unpacking,
-    mass, semi_major_axis, etc... = get_solar_system_planets_data(signature).
+
+    If only `planet_name` is provided, data for that planet will be returned and can then be accessed via dot notation
+    of the following shorthands:
+
+    columns_shorthand = ['name', 'm', 'a', 'd', 'T_orbit_days', 'e', 'rho', 'T_rotation_hours', 'k', 'Q'],
+
+    standing for the objects name, mass, semi-major-axis, diameter, orbital period in days, eccentricity, density,
+    rotation period in hours, second tidal love number and quality factor respectively, all in SI units if not just
+    specified otherwise.
+
+    Then:
+
+    sun = get_solar_system_bodies_data("sun")
+    semi_major_axis_sun = sun.a
+
+
     If `planet_name` and `physical_property` is provided, a float will be returned that represent the queried
     physical property.
 
@@ -233,9 +249,22 @@ def get_solar_system_bodies_data(file_to_read: str, name_of_celestial_body: str 
     if whole_row_mode:
         row = df[df['Body'] == name_of_celestial_body]
         row_nice_representation = row.iloc[0]
-        res = tuple(turn_to_float_if_possible(x) for x in row_nice_representation)
+
+        columns = row_nice_representation.index.values  # Array
+        # prints: ['Body' 'Mass-(kg)' 'Semi-major-axis-(m)' 'Diameter-(m)' 'Orbital-Period-(days)'
+        # 'Orbital-eccentricity' 'Density-(kg/m^3)' 'Rotation-Period-(hours)' '2nd-Tidal-Love-Number-(Estimate)'
+        # 'Quality-factor-(Estimate)'] => Now we hardcode shorthands.
+        columns_shorthand = ['name', 'm', 'a', 'd', 'T_orbit_days', 'e', 'rho', 'T_rotation_hours', 'k', 'Q']
+        values = [turn_to_float_if_possible(x) for x in row_nice_representation.values]  # Array
+
+        # Create canonical python dict and then instantiate custom class in which dict values can be accessed via dot
+        # notation (I prefer it that way)
+        normal_dict = dict(zip(columns_shorthand, values))
+        special_dict = SpecialDict(normal_dict)
+
         print(row_nice_representation) if print_return else dont()
-        return res
+        return special_dict
+
     elif specific_value_mode:
         row = df[df['Body'] == name_of_celestial_body]
         row_nice_representation = row.iloc[0]
@@ -257,7 +286,7 @@ class CelestialBody:
 
     def __init__(self, mass: float, density: float, semi_major_axis: Union[float, None], spin_frequency: float,
                  love_number: float, quality_factor: float, descriptive_index: str, name: str, hierarchy_number: int,
-                 hosting_body: Union['CelestialBody', None], inertial_moment: float):
+                 hosting_body: Union['CelestialBody', None]):
 
         """
         Base class representing a celestial body with its various properties set as class attributes.
@@ -304,9 +333,13 @@ class CelestialBody:
                                         Kepler's Third Law.
         mu:                             The standard gravitational parameter between `self` and the body that `self` orbits,
                                         specified by `self.hosting_body`.
+        R:                              Assuming a spherical volume, calculates the mean radius based on mass and density.
+        I:                              Assuming I = 2/5 M R^2, calculates the inertial moment.
 
         """
 
+        self.a0 = None          # Can be updated dynamically when setting up the solve_ivp.
+        self.omega0 = None      # Can be updated dynamically when setting up the solve_ivp.
         self.mass = mass
         self.rho = density
         self.omega = spin_frequency
@@ -410,8 +443,15 @@ class CelestialBody:
         I = 2/5 * self.mass * self.R**2
         return I
 
+    def get_current_roche_limit(self) -> float:
+        rl = get_roche_limit(self)
+        return rl
 
-def turn_seconds_to_years(seconds: float, keyword: str = "Normal") -> float:
+    def get_current_critical_sm_axis(self) -> float:
+        crit_sm_axis = get_critical_semi_major_axis(self)
+        return crit_sm_axis
+
+def turn_seconds_to_years(seconds: float, keyword: str = "Vanilla") -> float:
     """
     Converts seconds into years ("Vanilla"), millions ("Millions") or billions ("Billions") of years.
     :param seconds: float,  The seconds to convert.
@@ -442,8 +482,24 @@ def get_a_derivative_factors_experimental(hosted_body: 'CelestialBody') -> float
     return res
 
 
-# Alias for `get_a_derivative_factors_experimental`
+def get_omega_derivative_factors_experimental(body: 'CelestialBody') -> float:
+    """
+    Represents the common, multiplicative factors of the omega dot equations, see
+
+    https://github.com/iason-saganas/stability-of-submoons
+
+    for the equations
+    :param body:        The body that indexes the quantities to catch in an omega dot equation. See again the equations.
+    :return:    float, the calculated multiplicative factors
+    """
+    i = body
+    res = 3 * G * i.R**5 * i.k / (2 * i.Q * i.I)
+    return res
+
+
+# Aliases for `get_a_derivative_factors_experimental` and `get_omega_derivative_factors_experimental`
 get_a_factors = get_a_derivative_factors_experimental
+get_omega_factors = get_omega_derivative_factors_experimental
 
 
 def unpack_solve_ivp_object(solve_ivp_sol_object):
@@ -452,8 +508,8 @@ def unpack_solve_ivp_object(solve_ivp_sol_object):
     """
     time_points = np.array(solve_ivp_sol_object.t)
     solution = np.array(solve_ivp_sol_object.y)
-    t_events = np.array(solve_ivp_sol_object.t_events)
-    y_events = np.array(solve_ivp_sol_object.y_events)
+    t_events = solve_ivp_sol_object.t_events
+    y_events = solve_ivp_sol_object.y_events
     num_of_eval = np.array(solve_ivp_sol_object.nfev)
     num_of_eval_jac = np.array(solve_ivp_sol_object.njev)
     num_of_lu_decompositions = np.array(solve_ivp_sol_object.nlu)
@@ -463,3 +519,178 @@ def unpack_solve_ivp_object(solve_ivp_sol_object):
     return (time_points, solution, t_events, y_events, num_of_eval, num_of_eval_jac,
             num_of_lu_decompositions, status, message, success)
 
+
+def turn_billion_years_into_seconds(num: float) -> float:
+    """
+    :param num: float,      Then number of billions of years to turn into seconds
+    """
+    return num * 1e9 * 365 * 24 * 3600
+
+
+class SpecialDict:
+    """
+    This is a helper class that uses a normal python dictionary as input and stores its key values pairs as attributes,
+    such that values can be accessed via dot-notation of their keys, which I prefer.
+
+    test_dict = {'blah': 42}
+    special_dict = SpecialDict(test_dict)
+    val = special_dict.blah
+    # val == 42
+
+    """
+    def __init__(self, d):
+        self._dict = d
+
+    def __getattr__(self, attr):
+        if attr in self._dict:
+            return self._dict[attr]
+        else:
+            raise AttributeError(f"'SpecialDict' object has no attribute '{attr}'")
+
+
+def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_initial_values: bool = False):
+    """
+    This 'finalizes' an instantiated planetary system: It performs the following sanity checks:
+
+    1.  Are the mass ratios of the inputted bodies small? If not raise ValueError: Assumption of circularity is broken.
+    2.  Are the distances between the bodies such that one body does not crash into the other?
+    (3.  Not implemented: Does the system have basic gravitational stability? => Lagrangian Filter?)
+
+    If all the checks run successfully, nothing happens, else an exception is raised.
+
+    :param planetary_system: List['CelestialBody'],        The list containing instances of 'CelestialBody' that make up
+                                                           the planetary system. Does not have to be ordered.
+    :param use_initial_values: bool,                       Optional. If false, the stored a and omega values inside the
+                                                           `CelestialBody` instances represent the initial values of the
+                                                           problem. If that is not that case, the attributes `a0` and
+                                                           `omega0` have to be attached by hand (moon.a0 = 0.03 e.g.)
+                                                           and the `initial_values` parameter set to True to indicate
+                                                           that the attributes `.a0` and `.omega0` should be used
+                                                           instead of `.a` and `.omega`.
+
+
+    If the semi-major-axes and spin-frequencies that are stored in the `CelestialBody` instances already represent the
+    initial values, the parameter `initial_values` does not have to be provided.
+
+    """
+    if not use_initial_values:
+        raise_warning("\nFunction `bind_system_gravitationally()` --> Performing mass and distance ratio sanity "
+                      "checks for the inputted system.\n Check whether the stored values in the inputted "
+                      "`CelestialBody` instances \n are actually the initial values for the system. \n"
+                      "If not, set the parameter `initial_values` to `True` \n and attach the attributes `a0` and"
+                      "`omega0` to each `CelestialBody` instance by hand.\n")
+
+    hn_list = [body.hn for body in planetary_system]
+
+    # Perform mass and distance ratios check
+    m_ratio = .1
+    a_ratio = .3
+    for index, hn in enumerate(hn_list):
+        if hn == 1:
+            # No hosting body to check mass or semi-major-axis against if it's on the first hierarchy level
+            pass
+        else:
+            hosted_body = planetary_system[index]
+            hosting_body = hosted_body.hosting_body
+
+            mass_ratio = hosted_body.mass / hosting_body.mass
+            if mass_ratio > m_ratio:
+                raise ValueError(f"\n Exception inside 'bind_system_gravitationally' function: \n"
+                                 f"Mass ratio between bodies {hosting_body.name} and {hosted_body.name} is too big.\n "
+                                 f"Detected mass ratio: {mass_ratio}. Threshold: {m_ratio} "
+                                 f"(assumption that needs to be checked!).\n Absolute mass values: {hosting_body.mass} "
+                                 f"and {hosted_body.mass} respectively. \n")
+            else:
+                print(f"Mass ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} passed.\n "
+                      f"            Detected mass ratio: {mass_ratio}. Threshold: {m_ratio}.\n\n")
+
+            if hosted_body.hn == 2:
+                # Semi-major-axis of hosting.body is not defined => no semi-major-axis ratio
+                pass
+            else:
+                distance_ratio = None
+                if not use_initial_values:
+                    distance_ratio = hosted_body.a / hosting_body.a
+                else:
+                    distance_ratio = hosted_body.a0 / hosting_body.a0
+                if distance_ratio > a_ratio:
+                    raise ValueError(f"\n Exception inside 'bind_system_gravitationally' function: \n"
+                                     f"Distance ratio between bodies {hosting_body.name} and {hosted_body.name} is too "
+                                     f"big. \nDetected distance ratio: {distance_ratio}. Threshold: {a_ratio} "
+                                     f"(assumption that needs to be checked!).\n Absolute distance values: "
+                                     f"{hosting_body.a} and {hosted_body.a} respectively. ")
+                else:
+                    print(f"Distance ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} "
+                          f"passed. \n"
+                          f"            Detected semi-major-axis ratio: {distance_ratio}. Threshold: {a_ratio}.\n\n")
+
+
+def custom_experimental_plot(time_points, solution, derivative):
+    """
+    :ToDo Beautify plots and write better documentation and make plotting code more concise
+    :param time_points: The time points at which solutions were found
+    :param solution: numpy array, the y solution coming out of 'solve_ivp'
+    :param derivative: The derivative (callable)
+    :return:
+    """
+
+    fig, axs = plt.subplots(3, 1, figsize=(15, 5))
+
+    for y_sol, color, label, axis in zip(solution[:3], ["r", "g", "b"], ["sm. axis submoon", "moon", "planet"], axs):
+        axis.plot(turn_seconds_to_years(time_points, "Millions"), y_sol, f"{color}.", label=label)
+        axis.plot(turn_seconds_to_years(time_points, "Millions"), y_sol, f"{color}-")
+        axis.legend()
+
+    axs[2].set_xlabel("Time in Millions Of Years")
+    axs[2].set_ylabel("Semi-major-axis in meteres")
+    axs[0].set_title('Evolution of Semi-Major-Axes of Bodies', fontsize=16)  # Adjust fontsize and y position as needed
+    plt.tight_layout()
+    plt.show()
+
+    fig, axs = plt.subplots(3, 1, figsize=(15, 5))
+
+    for y_sol, color, label, axis in zip(solution[3:6], ["r", "g", "b"], ["Ω moon", "Ω planet", "Ω star"], axs):
+        axis.plot(turn_seconds_to_years(time_points, "Millions"), y_sol * 1000, f"{color}.", label=label)
+        axis.plot(turn_seconds_to_years(time_points, "Millions"), y_sol * 1000, f"{color}-")
+        axis.legend()
+
+    axs[2].set_xlabel("Time in Millions Of Years")
+    axs[2].set_ylabel("Omega in milli-Hertz")
+    axs[0].set_title('Evolution of Spin-Frequencies of Bodies', fontsize=16,
+                     y=1.05)  # Adjust fontsize and y position as needed
+    plt.tight_layout()
+    plt.show()
+
+    dy_dt = np.array(derivative(time_points, solution))
+
+    # Plot the derivative values against time
+    fig, axs = plt.subplots(3, 1, figsize=(15, 5))
+
+    for y_sol, color, label, axis in zip(dy_dt[:3], ["r", "g", "b"], ["da/dt submoon", "da/dt moon", "da/dt planet"],
+                                         axs):
+        axis.plot(turn_seconds_to_years(time_points, "Millions"), 100 * y_sol * (365 * 24 * 3600), f"{color}.",
+                  label=label)
+        axis.plot(turn_seconds_to_years(time_points, "Millions"), 100 * y_sol * (365 * 24 * 3600), f"{color}-")
+        axis.legend()
+
+    axs[2].set_xlabel("Time in Millions Of Years")
+    axs[2].set_ylabel("Semi-major-axis change in cm per year")
+    axs[0].set_title('Evolution of Rate of Change of Semi-Major-Axes of Bodies', fontsize=16,
+                     y=1.05)  # Adjust fontsize and y position as needed
+    plt.tight_layout()
+    plt.show()
+
+    fig, axs = plt.subplots(3, 1, figsize=(15, 5))
+
+    for y_sol, color, label, axis in zip(dy_dt[3:6], ["r", "g", "b"], ["dΩ/dt moon", "dΩ/dt planet", "dΩ/dt star"],
+                                         axs):
+        axis.plot(turn_seconds_to_years(time_points, "Vanilla"), y_sol * 1000, f"{color}.", label=label)
+        axis.plot(turn_seconds_to_years(time_points, "Vanilla"), y_sol * 1000, f"{color}-")
+        axis.legend()
+
+    axs[2].set_xlabel("Time in Vanilla Of Years")
+    axs[2].set_ylabel("Omega in milli-Hertz")
+    axs[0].set_title('Evolution of Rate of Change of Spin-Frequencies of Bodies', fontsize=16,
+                     y=1.05)  # Adjust fontsize and y position as needed
+    plt.tight_layout()
+    plt.show()
