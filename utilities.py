@@ -4,6 +4,7 @@ from warnings import warn as raise_warning
 import pandas as pd
 from typing import Union, List
 import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
 
 __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from_n', 'keplers_law_n_from_a_simple',
            'get_standard_grav_parameter', 'get_hill_radius_relevant_to_body', 'get_critical_semi_major_axis',
@@ -12,7 +13,7 @@ __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from
            'get_omega_derivative_factors_experimental', 'get_omega_factors', 'unpack_solve_ivp_object',
            'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'custom_experimental_plot',
            'submoon_system_derivative', 'update_values', 'track_submoon_sm_axis_1', 'track_submoon_sm_axis_2',
-           'track_moon_sm_axis_1', 'track_moon_sm_axis_2']
+           'track_moon_sm_axis_1', 'track_moon_sm_axis_2', 'reset_to_default', 'solve_ivp_iterator']
 
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
@@ -302,20 +303,20 @@ class CelestialBody:
         Attributes:
         ----------------
 
-        :parameter mass:                float,          Body's mass.
-        :parameter density:             float,          The body's mean density.
+        :parameter mass:                Float,          Body's mass.
+        :parameter density:             Float,          The body's mean density.
         :parameter semi_major_axis:     Union[float, None],   Value for the semi-major-axis. On instantiation, this should be the
                                                         semi-major-axis initial value `a_0` and may then be updated through
                                                         the method 'update_semi_major_axis'.
-        :parameter spin_frequency:      float,          Value for the spin-frequency. On instantiation, this should be the
+        :parameter spin_frequency:      Float,          Value for the spin-frequency. On instantiation, this should be the
                                                         spin-frequency initial value `omega_0` and may then be updated
                                                         through the method 'update_spin_frequency'.
-        :parameter love_number:         float,          The second tidal love number associated with the body's rheology.
-        :parameter quality_factor:      float,          The quality factor associated with the body's rheology.
-        :parameter descriptive_index:   str,            A descriptive index shorthand for the body, e.g. "sm" for submoon.
-        :parameter name:                str,            The name for the body, e.g. "submoon".
-        :parameter hierarchy_number:    int,            The hierarchy number corresponding to the body's position in the
-                                                        nested body system. 1 for star, 2 for planet, 3 for moon,
+        :parameter love_number:         Float,          The second tidal love number associated with the body's rheology.
+        :parameter quality_factor:      Float,          The quality factor associated with the body's rheology.
+        :parameter descriptive_index:   Str,            A descriptive index shorthand for the body, e.g. "sm" for submoon.
+        :parameter name:                Str,            The name for the body, e.g. "submoon".
+        :parameter hierarchy_number:    Int,            The hierarchy number corresponding to the body's position in the
+                                                        nested body system. 1 for star, 2 for the planet, 3 for the moon,
                                                         4 for submoon.
         :parameter hosting_body:        Union[float, None],  The body that `self` orbits, i.e. the hosting body.
 
@@ -323,8 +324,8 @@ class CelestialBody:
         ----------------
         update_semi_major_axis_a:       Updates the semi-major-axis based on a value.
         update_spin_frequency_omega:    Updates the spin-frequency based on a value.
-                                        semi-major-axis. After initialization, `self.n` can be used instead.
-                                        `self` and its hosts as specified by `self.hosting_body`
+                                        Semi-major-axis. After initialization, `self.n` can be used instead.
+                                        `Self` and its hosts as specified by `self.hosting_body`
 
 
         Properties
@@ -340,8 +341,8 @@ class CelestialBody:
 
         """
 
-        self.a0 = None          # Can be updated dynamically when setting up the solve_ivp.
-        self.omega0 = None      # Can be updated dynamically when setting up the solve_ivp.
+        self.a0 = None  # Can be updated dynamically when setting up the solve_ivp.
+        self.omega0 = None  # Can be updated dynamically when setting up the solve_ivp.
         self.mass = mass
         self.rho = density
         self.omega = spin_frequency
@@ -442,7 +443,7 @@ class CelestialBody:
         ToDo: Introduce alpha parameter to increase accuracy
         :return: float,     The calculated inertial moment
         """
-        I = 2/5 * self.mass * self.R**2
+        I = 2 / 5 * self.mass * self.R ** 2
         return I
 
     def get_current_roche_limit(self) -> float:
@@ -452,6 +453,7 @@ class CelestialBody:
     def get_current_critical_sm_axis(self) -> float:
         crit_sm_axis = get_critical_semi_major_axis(self)
         return crit_sm_axis
+
 
 def turn_seconds_to_years(seconds: float, keyword: str = "Vanilla") -> float:
     """
@@ -465,9 +467,9 @@ def turn_seconds_to_years(seconds: float, keyword: str = "Vanilla") -> float:
     if keyword == "Vanilla":
         return np.round(seconds_in_years, 2)
     elif keyword == "Millions":
-        return np.round(seconds_in_years/10**6, 2)
+        return np.round(seconds_in_years / 10 ** 6, 2)
     elif keyword == "Billions":
-        return np.round(seconds_in_years/10**9, 2)
+        return np.round(seconds_in_years / 10 ** 9, 2)
     else:
         raise_warning("Something unexpected occured inside function `turn_seconds_to_years`.")
 
@@ -480,7 +482,7 @@ def get_a_derivative_factors_experimental(hosted_body: 'CelestialBody') -> float
     """
     j = hosted_body
     i = j.hosting_body
-    res = 3 * i.R**5 * j.mu**(1/2) * i.k * j.mass / (i.Q*i.mass)
+    res = 3 * i.R ** 5 * j.mu ** (1 / 2) * i.k * j.mass / (i.Q * i.mass)
     return res
 
 
@@ -495,7 +497,7 @@ def get_omega_derivative_factors_experimental(body: 'CelestialBody') -> float:
     :return:    float, the calculated multiplicative factors
     """
     i = body
-    res = 3 * G * i.R**5 * i.k / (2 * i.Q * i.I)
+    res = 3 * G * i.R ** 5 * i.k / (2 * i.Q * i.I)
     return res
 
 
@@ -540,6 +542,7 @@ class SpecialDict:
     # val == 42
 
     """
+
     def __init__(self, d):
         self._dict = d
 
@@ -550,7 +553,8 @@ class SpecialDict:
             raise AttributeError(f"'SpecialDict' object has no attribute '{attr}'")
 
 
-def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_initial_values: bool = False):
+def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_initial_values: bool = False,
+                                verbose: bool = True):
     """
     This 'finalizes' an instantiated planetary system: It performs the following sanity checks:
 
@@ -569,7 +573,7 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
                                                            and the `initial_values` parameter set to True to indicate
                                                            that the attributes `.a0` and `.omega0` should be used
                                                            instead of `.a` and `.omega`.
-
+    :param verbose: bool,                                  Whether to print the calculated distance and mass ratios.
 
     If the semi-major-axes and spin-frequencies that are stored in the `CelestialBody` instances already represent the
     initial values, the parameter `initial_values` does not have to be provided.
@@ -604,7 +608,7 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
                                  f"Detected mass ratio: {mass_ratio}. Threshold: {m_ratio} "
                                  f"(assumption that needs to be checked!).\n Absolute mass values: {hosting_body.mass} "
                                  f"and {hosted_body.mass} respectively. \n")
-            else:
+            elif verbose:
                 print(f"Mass ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} passed.\n "
                       f"            Detected mass ratio: {mass_ratio}. Threshold: {m_ratio}.\n\n")
 
@@ -623,7 +627,7 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
                                      f"big. \nDetected distance ratio: {distance_ratio}. Threshold: {a_ratio} "
                                      f"(assumption that needs to be checked!).\n Absolute distance values: "
                                      f"{hosting_body.a} and {hosted_body.a} respectively. ")
-                else:
+                elif verbose:
                     print(f"Distance ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} "
                           f"passed. \n"
                           f"            Detected semi-major-axis ratio: {distance_ratio}. Threshold: {a_ratio}.\n\n")
@@ -734,14 +738,38 @@ def submoon_system_derivative(t, y, planetary_system: List['CelestialBody'], mu_
 
     # Define the spin-frequency derivatives
     omega_m_dot = np.round(-get_omega_factors(moon) * (np.sign(omega_m - n_p_m) * planet.mass ** 2 * a_p_m ** (-6)
-                                              + np.sign(omega_m - n_m_sm) * submoon.mass ** 2 * a_m_sm ** (-6)), 10)
+                                                       + np.sign(omega_m - n_m_sm) * submoon.mass ** 2 * a_m_sm ** (
+                                                           -6)), 10)
     omega_p_dot = (- get_omega_factors(planet) * (np.sign(omega_p - n_s_p) * star.mass ** 2 * a_s_p ** (-6)
-                   + np.sign(omega_p - n_p_m) * moon.mass ** 2 * a_p_m ** (-6)))
-    omega_s_dot = - get_omega_factors(star) * np.sign(omega_s - n_s_p) * planet.mass ** 2 * a_s_p**(-6)
+                                                  + np.sign(omega_p - n_p_m) * moon.mass ** 2 * a_p_m ** (-6)))
+    omega_s_dot = - get_omega_factors(star) * np.sign(omega_s - n_s_p) * planet.mass ** 2 * a_s_p ** (-6)
 
     # Define and return the derivative vector
     dy_dt = [a_m_sm_dot, a_p_m_dot, a_s_p_dot, omega_m_dot, omega_p_dot, omega_s_dot]
     return dy_dt
+
+
+def reset_to_default(y: list, planetary_system: List['CelestialBody']):
+    """
+    During each iteration of `solve_ivp` the semi-major-axes and spin-frequencies are updated dynamically.
+    This function resets their values to those specified on creation by the function `create_submoon_system`.
+    :param y: list,                                A hard copy of the values assigned to the `planetary_system`
+                                                    on creation.
+                                                    (Copies to avoid using the dynamically updated values).
+    :param planetary_system: List['CelestialBody'], The planetary system to reset.
+    """
+    # Unpack all values to update
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+
+    star, planet, moon, submoon = planetary_system
+
+    star.update_spin_frequency_omega(omega_s)
+    planet.update_spin_frequency_omega(omega_p)
+    moon.update_spin_frequency_omega(omega_p)
+
+    planet.update_semi_major_axis_a(a_s_p)
+    moon.update_semi_major_axis_a(a_p_m)
+    submoon.update_semi_major_axis_a(a_m_sm)
 
 
 def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
@@ -756,7 +784,7 @@ def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m
     # track and update all relevant values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
 
-    # List unpack the celestial bodies of the system to access their pre-defined properties
+    # Unpack the celestial bodies of the system to access their pre-defined properties
     star, planet, moon, submoon = planetary_system
 
     star.update_spin_frequency_omega(omega_s)
@@ -768,7 +796,7 @@ def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m
     submoon.update_semi_major_axis_a(a_m_sm)
 
     # Use an infinity value, so to not actually activate the event
-    return omega_s-np.inf
+    return omega_s - np.inf
 
 
 def track_submoon_sm_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
@@ -812,3 +840,156 @@ track_submoon_sm_axis_1.terminal = True
 track_submoon_sm_axis_2.terminal = True
 track_moon_sm_axis_1.terminal = True
 track_moon_sm_axis_2.terminal = True
+
+
+def solve_ivp_iterator_console_logger(planetary_system, mode=0, current_y_init=None, current_iterated_var_index=None,
+                                      upper_lim=None):
+    sun_mass = 1.98847 * 1e30  # kg
+    earth_mass = 5.972 * 1e24  # kg
+    luna_mass = 0.07346 * 1e24  # kg
+    jupiter_mass = 1.89813 * 1e27  # kg
+
+    AU = 149597870700  # m
+    earth_luna_distance = 384400000  # m
+
+    star, planet, moon, submoon = planetary_system
+
+    star_mass_relative = np.round(star.mass/sun_mass, 4)
+    planet_mass_in_earths = np.round(planet.mass/earth_mass, 4)
+    planet_mass_in_jupiters = np.round(planet.mass / jupiter_mass, 4)
+    planet_mass_relative = planet_mass_in_earths if planet_mass_in_earths < 200 else planet_mass_in_jupiters
+    planet_mass_reference_str = "m_earth" if planet_mass_in_earths < 200 else "m_jup"
+    moon_mass_relative = np.round(moon.mass / luna_mass, 4)
+    submoon_mass_relative = np.round(submoon.mass / moon.mass, 4)
+
+    planet_distance_relative = np.round(planet.a/AU, 4)
+    moon_distance_relative = np.round(moon.a/earth_luna_distance, 4)
+    submoon_distance_relative = np.round(submoon.a / earth_luna_distance, 4)
+
+    if mode == 0:
+        # General information about the masses that can be printed once in the beginning
+        print("\n------------------------------------------")
+        print("The following base system is simulated:")
+        print(f"Sun: {star_mass_relative} m_sun → Planet: {planet_mass_relative} {planet_mass_reference_str} → "
+              f"Moon: {moon_mass_relative} m_luna → Submoon: {submoon_mass_relative} m_moon.\n")
+
+    elif mode == 1:
+        # More detailed information about the initial values of the system describing the objects,
+        # that change in each iteration.
+        print("\t\tSub-iteration. Chosen initial values for semi-major-axes:")
+        if any((current_y_init, current_iterated_var_index, upper_lim)) is None:
+            raise ValueError("\t\t`current_y_init` or `current_iterated_var_index` or `upper_lim` must not be None.")
+
+        if current_iterated_var_index > 2:
+            raise ValueError('\t\tLog Case for Omega not yet handled inside logger `solve_ivp_iterator_console_logger`')
+
+        submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0 = current_y_init
+        relative_distances = [submoon_distance_relative, moon_distance_relative, planet_distance_relative]
+        current_iteration_value = current_y_init[current_iterated_var_index]
+        progress_in_percent = 100 * np.round(current_iteration_value/upper_lim , 2)
+        relative_distances[current_iterated_var_index] = (f'{progress_in_percent}% of '
+                                                          f'{relative_distances[current_iterated_var_index]}')
+        submoon_distance_relative, moon_distance_relative, planet_distance_relative = relative_distances
+        print(f"\t\tSun -- {planet_distance_relative}AU --> Planet -- {moon_distance_relative} d_luna --> Moon -- "
+              f"{submoon_distance_relative} d_luna --> Submoon\n")
+
+
+def solve_ivp_iterator(key: str, index_to_vary: int, upper_lim: float, n_pix: int, y_init: list, y_default: list,
+                       planetary_system: list, list_of_std_mus: list) -> list:
+    """
+    The main function executing the numerical integration of the submoon system.
+
+    :param key: str,          The name of the key that is currently iterated.
+    :param index_to_vary:     The index of the element in the list,
+
+                              [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega],
+
+                              that represents the quantity that is to be varied.
+    :param upper_lim: float,  The loop iterates from 10% of `upper_lim` to 100% of `upper_lim`.
+    :param n_pix: int,        It does so in `n_pix` steps.
+    :param y_init: list,      A list of floats that describe the initial values of the submoon system.
+                              Order:
+
+                              [submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0]
+
+    @param y_default, list   A list in the same order as `y_init` that contains the default values of the semi-major-
+                             axes and spin-frequencies as they were before this function was activated (this function
+                             dynamically updates those values).
+
+    :param planetary_system: list,  A list of `CelestialBody` objects that represents the submoon system.
+    Order:                    [star, planet, moon, submoon]
+    @param list_of_std_mus: list,  A list of floats containing the standard gravitational parameters of the system.
+    Order:                    [mu_m_sm, mu_p_m, mu_s_p]
+
+    :return: results: list    Containing information objects for each iteration.
+
+    """
+    results = []
+    solve_ivp_iterator_console_logger(planetary_system)
+    # Note: During this loop, the semi-major-axes and spin-frequencies of all updates are updated dynamically.
+    # Do not reference 'submoon.a' with the expectation to access the value that was assigned by
+    # 'create_submoon_system'.
+    # Exception: After each simulation, i.e., the end of 'solve_ivp', all values are reset to the values assigned by
+    # 'create_submoon_system'.
+    for i in np.linspace(0.1 * upper_lim, upper_lim, n_pix):
+        # Inject the variable to actually vary
+        # The values of y_init stay constant throughout all simulations, except the quantity that is varied.
+        y_init[index_to_vary] = i
+
+        # Log some stuff.
+        solve_ivp_iterator_console_logger(planetary_system, mode=1, current_y_init=y_init,
+                                          current_iterated_var_index=index_to_vary, upper_lim=upper_lim)
+
+        # Finalize the system
+        planetary_system = bind_system_gravitationally(planetary_system=planetary_system,
+                                                       use_initial_values=True, verbose=False)
+
+        # define events to track and values to update
+        list_of_all_events = [update_values, track_submoon_sm_axis_1, track_submoon_sm_axis_2,
+                              track_moon_sm_axis_1, track_moon_sm_axis_2]
+
+        # evolve to 4.5 Bn. years
+        final_time = turn_billion_years_into_seconds(4.5)
+
+        # Extract the standard gravtiational parameters
+        mu_m_sm, mu_p_m, mu_s_p = list_of_std_mus
+        # Solve the problem
+        sol_object = solve_ivp(fun=submoon_system_derivative, t_span=(0, final_time), y0=y_init, method="RK23",
+                               args=(planetary_system, mu_m_sm, mu_p_m, mu_s_p), events=list_of_all_events)
+
+        # Unpack solution
+        time_points, _, _, _, _, _, _, status, message, success = unpack_solve_ivp_object(sol_object)
+
+        """
+        # Unpack variables outputted by solution object.
+        (time_points, solution, t_events, y_events, num_of_eval, num_of_eval_jac, num_of_lu_decompositions, status, message,
+         success) = unpack_solve_ivp_object(sol_object)
+
+        print("sol_object : ", sol_object)
+        custom_experimental_plot(time_points, solution, submoon_system_derivative)
+        """
+
+        if status == 0:
+            # Stable input parameters.
+            results.append("stable ✓")
+        elif status == 1:
+            # A termination event occurred
+            results.append("term ⚡")
+        elif status == -1:
+            # Numerical error.
+            results.append("error ✗")
+        else:
+            raise ValueError("Unexpected outcome.")
+
+        # Reset values to state of 'create_submoon_system' initialization for clarity. Plots need to be made before this
+        # line runs.
+        reset_to_default(y=y_default, planetary_system=planetary_system)
+
+        """print("Number of time steps taken: ", len(time_points))
+        print("Status: ", status)
+        print("Message: ", message)
+        print("Success: ", success)"""
+
+    print("\n------------------------------------------\n")
+
+    return results

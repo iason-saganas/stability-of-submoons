@@ -80,7 +80,9 @@ def create_submoon_system(visualize_with_plot: bool = False):
                          quality_factor=luna_d.Q, descriptive_index="m", name="moon",
                          hierarchy_number=3, hosting_body=earth)
 
-    submoon = CelestialBody(mass=submoon_d.m/2.1, density=submoon_d.rho, semi_major_axis=submoon_d.a*5,
+    submoon_mass = submoon_d.m/2.1
+    print("sm smax: ", submoon_d.a*5/moon.a ," d luna")
+    submoon = CelestialBody(mass=submoon_d.m/2.1/100, density=submoon_d.rho, semi_major_axis=submoon_d.a*5,
                             spin_frequency=spin_frequency_submoon, love_number=submoon_d.k,
                             quality_factor=submoon_d.Q, descriptive_index="sm", name="submoon",
                             hierarchy_number=4, hosting_body=moon)

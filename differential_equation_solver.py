@@ -28,8 +28,9 @@ mu_s_p = get_standard_grav_parameter(hosting_body=star, hosted_body=planet, chec
 planet_omega = 1/(5*3600)  # Giant Theia Impact => Days were 5 hours long
 moon_distance = moon.a/2.05   # Also moon was apparently 17x closer when it formed
 corresponding_orbit_frequency_moon = keplers_law_n_from_a_simple(moon_distance, mu_p_m)
-moon_omega = corresponding_orbit_frequency_moon  # Moon has been tidally locked since birth!
+moon_omega = corresponding_orbit_frequency_moon  # The moon has been tidally locked since birth!
 
+# Set the found initial values of the system via attribute dot notation
 submoon.a0 = submoon.a
 moon.a0 = moon_distance
 planet.a0 = planet.a
@@ -38,45 +39,23 @@ moon.omega0 = moon_omega
 planet.omega0 = planet_omega
 star.omega0 = star.omega
 
-# for i in np.linspace(moon.a0, moon.a,10):
+# Hard copy of all s.m.axes and spin frequencies of the system. Their values are updated dynamically in each iteration.
+# Through the copy, `reset_to_default` can be called, which reassigns the values given on creation by
+# `create_submoon_system`.
+copy_of_default_vars = [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega]
+names = ['submoon.a', 'moon.a', 'planet.a', 'moon.omega', 'planet.omega', 'star.omega']
 
-y_init = [submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0]
+# The index of the variable to vary. E.g., 1 for `moon.a`.
+index_to_vary = 1
+quantity_to_vary = copy_of_default_vars[index_to_vary]
 
-# Finalize the system
-planetary_system = bind_system_gravitationally(planetary_system=[star, planet, moon, submoon], use_initial_values=True)
+# Define the resolution, i.e., how many simulations to do
+n_pix = 100
 
-list_of_all_events = [update_values, track_submoon_sm_axis_1, track_submoon_sm_axis_2,
-                      track_moon_sm_axis_1, track_moon_sm_axis_2]
+result = solve_ivp_iterator(key=names[index_to_vary], index_to_vary=index_to_vary, upper_lim=quantity_to_vary,
+                            n_pix=100, y_init=[submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0],
+                            y_default=copy_of_default_vars, planetary_system=[star, planet, moon, submoon],
+                            list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p])
 
-# evolve to 4.5 Bn. years
-final_time = turn_billion_years_into_seconds(4.5)
-
-# Solve the problem
-sol_object = solve_ivp(fun=submoon_system_derivative, t_span=(0, final_time), y0=y_init, method="RK23",
-                       args=(planetary_system, mu_m_sm, mu_p_m, mu_s_p), events=list_of_all_events)
-
-time_points, _, _, _, _, _, _, status, message, success = unpack_solve_ivp_object(sol_object)
-
-"""
-# Unpack variables outputted by solution object.
-(time_points, solution, t_events, y_events, num_of_eval, num_of_eval_jac, num_of_lu_decompositions, status, message,
- success) = unpack_solve_ivp_object(sol_object)
-
-print("sol_object : ", sol_object)
-custom_experimental_plot(time_points, solution, submoon_system_derivative)
-"""
-
-if status == 0:
-    print("Stable input parameters.")
-elif status == 1:
-    print("A termination event occurred")
-elif status == -1:
-    print("Numerical error.")
-else:
-    raise ValueError("Unexpected outcome.")
-
-print("Number of time steps taken: ", len(time_points))
-print("Status: ", status)
-print("Message: ", message)
-print("Success: ", success)
+print("Result: ", result)
 
