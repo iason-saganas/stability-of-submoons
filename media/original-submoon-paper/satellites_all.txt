@@ -1,0 +1,75 @@
+;;; SATELLITE DATA: D>20km from WIKIPEDIA
+
+Host Name a(km) D(km) Mass(10^16kg)
+
+Jupiter Metis 127690. 40.0 3.6
+Jupiter Andrastea 129000. 16. 0.2
+Jupiter Amalthea 181366. 150. 208.0
+Jupiter Thebe 221889. 100. 43.
+Jupiter Io 421700. 3640. 8900000.0
+Jupiter Europa 671034 3121.6 4800000.0 
+Jupiter Ganymede 1070412. 5262.0 15000000.0
+Jupiter Callisto 1882709. 4820. 11000000.0
+Jupiter Himalia 11451971. 170. 670.
+Jupiter Lysithea 11740560. 36. 6.3
+Jupiter Elara 11778034. 86. 87.
+Jupiter Ananke 21454952. 28. 3.
+Jupiter Carme 23197992.  46. 13.
+Jupiter Pasiphae 23609042. 60. 30.
+Jupiter Sinope 24057865 38 7.5
+
+Saturn Pan 133584 28 0.5
+Saturn Atlas 137670  30 0.66
+Saturn Prometheus 139380 86 15.95
+Saturn Pandora 141720 81 13.7
+Saturn Epimetheus 151422 116 53
+Saturn Janus 151472 179 190
+Saturn Mimas 185404. 396. 3749. 
+Saturn Enceladus 237948 504. 11000.
+Saturn Tethys 294619. 1062. 62000.
+Saturn Telesto 294619 25 0.9
+Saturn Dione 377396. 1123 110000
+Saturn Rhea 527108 1527 230000
+Saturn Titan 1221870 5150 13500000
+Saturn Hyperion 1481010 270 562 
+Saturn Iapetus 3560820 1468.6 180000
+Saturn Phoebe 12869700 213 829
+
+Uranus Cordelia 49770 40 4.4
+Uranus Ophelia 53790 43 5.3
+Uranus Bianca 59170 51 9.2
+Uranus Cressida 61780 80 34
+Uranus Desdemona 62680 64 18
+Uranus Juliet 64350 94 56 
+Uranus Portia 66090 135 170
+Uranus Rosalind 69940 72 25
+Uranus Belinda 75360 90 49
+Uranus Perdita 76400 30 1.8
+Uranus Puck 86010 162 290
+Uranus Mab 97700 25 1
+Uranus Miranda 129390 472. 6590
+Uranus Ariel 191020 1158 135300
+Uranus Umbriel 266300 1169 117200
+Uranus Titania 435910 1576 352700
+Uranus Oberon 583520 1534 301400
+Uranus Caliban 7230000 72 25
+Uranus Sycorax 12179000 165 230
+Uranus Prospero 16418000 50 8.5
+Uranus Setebos 17459000 48 7.5
+
+Neptune Naiad 48227 66 19
+Neptune Thalassa 50074 82 35
+Neptune Despina 52526 150 210
+Neptune Galatea 61953 176 375
+Neptune Larissa 73548 194 495
+Neptune Proteus 117646 420 5035
+Neptune Triton 354759 2705 2140800
+Neptune Nereid 5513818 340 2700
+Neptune Halimede 16611000 62 16 
+
+Earth Moon 384399 3472.2 7342000
+
+Mars Phobos 9377 22.2 1.08
+Mars Deimos 23460 12.6 0.2
+
+K1625b Exomoon 2908368.0 51000  5.9740000e+09
