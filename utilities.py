@@ -7,6 +7,9 @@ from typing import Union, List, Any
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from style_components.matplotlib_style import *
+import pickle
+
+AU = 1.496e11
 
 __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from_n', 'keplers_law_n_from_a_simple',
            'get_standard_grav_parameter', 'get_hill_radius_relevant_to_body', 'get_critical_semi_major_axis',
@@ -15,7 +18,7 @@ __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from
            'get_omega_derivative_factors_experimental', 'get_omega_factors', 'unpack_solve_ivp_object',
            'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'custom_experimental_plot',
            'submoon_system_derivative', 'update_values', 'track_submoon_sm_axis_1', 'track_submoon_sm_axis_2',
-           'track_moon_sm_axis_1', 'track_moon_sm_axis_2', 'reset_to_default', 'solve_ivp_iterator']
+           'track_moon_sm_axis_1', 'track_moon_sm_axis_2', 'reset_to_default', 'solve_ivp_iterator', 'showcase_results']
 
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
@@ -620,7 +623,6 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
                 # Semi-major-axis of hosting.body is not defined => no semi-major-axis ratio
                 pass
             else:
-                distance_ratio = None
                 if not use_initial_values:
                     distance_ratio = hosted_body.a / hosting_body.a
                 else:
@@ -868,7 +870,8 @@ track_moon_sm_axis_2.terminal = True
 
 
 def solve_ivp_iterator_console_logger(planetary_system, mode=0, current_y_init=None, upper_lim_out=None,
-                                      upper_lim_in=None, outer_counter=None, inner_counter=None):
+                                      upper_lim_middle=None, upper_lim_in=None, outer_counter=None,
+                                      middle_counter=None, inner_counter=None):
     sun_mass = 1.98847 * 1e30  # kg
     earth_mass = 5.972 * 1e24  # kg
     luna_mass = 0.07346 * 1e24  # kg
@@ -901,27 +904,38 @@ def solve_ivp_iterator_console_logger(planetary_system, mode=0, current_y_init=N
     elif mode == 1:
         # More detailed information about the initial values of the system describing the objects,
         # that change in each iteration.
-        if any((current_y_init, upper_lim_out, upper_lim_in, outer_counter, inner_counter)) is None:
-            raise ValueError("\t\t`current_y_init` or `current_iterated_var_index` or `upper_lim` must not be None.")
+        if any((current_y_init, upper_lim_out, upper_lim_middle, upper_lim_in,
+                outer_counter, middle_counter, inner_counter)) is None:
+            raise ValueError("\t\tLogging-Mode-1 arguments must not be None.")
 
-        print(f"\t\tSub-iteration {outer_counter, inner_counter}. "
+        print(f"\t\tSub-iteration {outer_counter, middle_counter, inner_counter}. "
               f"Initial distances between objects in this iteration:")
 
-        i_index = 1  # Moon position in `y_init`
-        j_index = 0  # Submoon position in `y_init`
+        i_index = 2  # Planet position in `y_init`
+        j_index = 1  # Moon position in `y_init`
+        k_index = 0  # Submoon position in `y_init`
 
         submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0 = current_y_init
         relative_distances = [submoon_distance_relative, moon_distance_relative, planet_distance_relative]
+
         current_iteration_value_i = current_y_init[i_index]
         current_iteration_value_j = current_y_init[j_index]
-        progress_in_percent_moon = 100 * np.round(current_iteration_value_i / upper_lim_out, 2)
-        progress_in_percent_submoon = 100 * np.round(current_iteration_value_j / upper_lim_in, 2)
-        relative_distances[i_index] = (f'{progress_in_percent_moon}% of '
-                                       f'upper limit: {np.round(
-                                           current_iteration_value_i / earth_luna_distance, 2)}')
-        relative_distances[j_index] = (f'{progress_in_percent_submoon}% of '
-                                       f'upper limit: {np.round(
+        current_iteration_value_k = current_y_init[k_index]
+
+        progress_in_percent_planet = 100 * np.round(current_iteration_value_i / upper_lim_out, 2)
+        progress_in_percent_moon = 100 * np.round(current_iteration_value_j / upper_lim_middle, 2)
+        progress_in_percent_submoon = 100 * np.round(current_iteration_value_k / upper_lim_in, 2)
+
+        relative_distances[i_index] = (f'{progress_in_percent_planet}% of '
+                                       f'upper limit. Current abs. value: {np.round(
+                                           current_iteration_value_i / AU, 2)}')
+        relative_distances[j_index] = (f'{progress_in_percent_moon}% of '
+                                       f'upper limit. Current abs. value: {np.round(
                                            current_iteration_value_j / earth_luna_distance, 2)}')
+        relative_distances[k_index] = (f'{progress_in_percent_submoon}% of '
+                                       f'upper limit. Current abs. value: {np.round(
+                                           current_iteration_value_k / earth_luna_distance, 2)}')
+
         submoon_distance_relative, moon_distance_relative, planet_distance_relative = relative_distances
         print(f"\t\tSun -- {planet_distance_relative}AU --> Planet -- {moon_distance_relative} d_luna --> Moon -- "
               f"{submoon_distance_relative} d_luna --> Submoon\n")
@@ -1033,41 +1047,85 @@ def find_termination_reason(status, t_events, keys):
         return "No termination event occurred."
 
 
-def document_result(status, termination_reason, time_points, results, i, j,
-                    y_init, y_final, termination_reason_counter, lifetimes):
+def document_result(status, termination_reason, time_points, results, i, j, k,
+                    y_init, y_final, termination_reason_counter, lifetimes, whole_solution_object):
     stability_status = log_results(status, termination_reason, time_points)
     results.append(stability_status)
-    lifetimes.append([(i, j,), turn_seconds_to_years(np.max(time_points)), y_init, y_final,
-                      termination_reason])
+    lifetimes.append([(i, j, k,), turn_seconds_to_years(np.max(time_points)), y_init, y_final,
+                      termination_reason, whole_solution_object])
     termination_reason_counter[str(termination_reason)] += 1
 
 
-def solve_ivp_iterator(n_pix_moon: int, n_pix_submoon: int, y_init: list,
-                       planetary_system: list, list_of_std_mus: list, use_initial_values=False) -> list:
+def pickle_me_this(filename: str, data_to_pickle: object):
+    path = filename + ".pickle"
+    file = open(path, 'wb')
+    pickle.dump(data_to_pickle, file)
+    file.close()
+
+
+def unpickle_me_this(filename):
+    file = open(filename, 'rb')
+    data = pickle.load(file)
+    file.close()
+    return data
+
+
+def showcase_results(result):
+    from collections import defaultdict
+    hits = result[0]
+    hit_counts = defaultdict(int)
+    for hit in hits:
+        hit_counts[hit] += 1
+
+    print("\n\n--------RESULTS--------\n\n")
+    print("\n------ Stability states (-1: Termination, NUM ER: Numerical error, +1: Longevity):")
+    for key, value in hit_counts.items():
+        print(f'{key}: {value}')
+    print("\n------")
+
+    print("\n------ Histogram of termination reasons:")
+    for key, value in result[1].items():
+        print(f'{key}: {value}')
+    print("\n------")
+
+    print("\n------ Longest lifetime object (Second element is lifetime in years):")
+    max_subarray = max(result[2], key=lambda x: x[1])
+    index_of_longest_lifetime_array = result[2].index(max_subarray)
+    print(result[2][index_of_longest_lifetime_array])
+
+
+def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y_init: list, planetary_system: list,
+                       list_of_std_mus: list, use_initial_values=False, upper_lim_planet=30) -> list:
+
+    # noinspection StructuralWrap
     """
     The main function executing the numerical integration of the submoon system.
+    The state of the system is encdoded in six variables that are ordered like this throughout the code:
 
-    :param index_to_vary: int,         The index of the element in the list:
+    [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega],
 
-                                       [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega],
+    :param n_pix_planet:       int,     The outer, planet semi-major-axis iteration step length.
+    :param n_pix_moon:         int,     The middle, moon semi-major-axis iteration step length.
+    :param n_pix_submoon:      int,     The inner, submoon semi-major-axis iteration step length.
+    :param y_init:             list,    A list of floats that describe the initial values of the submoon system.
+                                        Order: [submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0]
+    :param planetary_system:   list,    A list of `CelestialBody` objects that represents the submoon system.
+                                        Order: [star, planet, moon, submoon]
+    :param list_of_std_mus:    list,    A list of floats containing the standard gravitational parameters of the system.
+                                        Order: [mu_m_sm, mu_p_m, mu_s_p]
+    :param use_initial_values: bool,    See documentation of `bind_system_gravitationally`
+    :param upper_lim_planet:   float,   The upper limit of the planet's semi-major-axis to vary to in astronomical
+                                        units.
 
-                                       that represents the quantity that is to be varied.
-    :param n_pix_moon: int,            The outer, moon semi-major-axis iteration step length.
-    :param n_pix_submoon: int,         The inner, submoon semi-major-axis iteration step length.
-    :param y_init: list,               A list of floats that describe the initial values of the submoon system.
-                                       Order: [submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0]
-    :param planetary_system: list,     A list of `CelestialBody` objects that represents the submoon system.
-                                       Order: [star, planet, moon, submoon]
-    @param list_of_std_mus: list,      A list of floats containing the standard gravitational parameters of the system.
-                                       Order: [mu_m_sm, mu_p_m, mu_s_p]
-    @param use_initial_values: bool,   See documentation of `bind_system_gravitationally`
-
-    :return: results: list,            Containing information objects for each iteration.
+    :return:                   tuple,   Containing information objects for all iterations:
+                                        results, lifetimes, termination_reason_counter
 
     """
-    results = []
+    results = []  # contains strings "-1", "+1" and "NUM ER" for each iteration,
+    # indicating success status of integration
     lifetimes = []  # contains elements like this:
-    # ((iteration identifier),lifetime in years, [initial state vector], [last state vector], termination reason)
+    # ((iteration identifier),lifetime in years, [initial state vector],
+    # [last state vector], termination reason, whole solution object from solve_ivp)
     termination_reason_counter = {"Submoon fell under roche limit": 0,
                                   "Submoon exceeded a_crit": 0,
                                   "Moon fell under roche limit": 0,
@@ -1077,6 +1135,7 @@ def solve_ivp_iterator(n_pix_moon: int, n_pix_submoon: int, y_init: list,
                                   "Some roche limit was greater than a_crit": 0,
                                   "Some initial value was under the roche or over the a_crit limit": 0,
                                   "No termination event occurred.": 0}
+
     solve_ivp_iterator_console_logger(planetary_system, mode=0)
     raise_warning("Please ensure the correct order of the initial state:\n "
                   "[submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0]\n")
@@ -1084,9 +1143,9 @@ def solve_ivp_iterator(n_pix_moon: int, n_pix_submoon: int, y_init: list,
     # Unpack the planetary system
     star, planet, moon, submoon = planetary_system
 
-    # Start iteration of the moon's semi-major-axis from its roche limit to its critical semi-major-axis
-    lower_lim_out = moon.get_current_roche_limit()
-    upper_lim_out = moon.get_current_critical_sm_axis()
+    # Start iteration of the planet's semi-major-axis from its roche limit to 30 AU (approximately Neptune's distance)
+    lower_lim_out = planet.get_current_roche_limit()
+    upper_lim_out = upper_lim_planet*AU
 
     # Note: During this loop, the semi-major-axes and spin-frequencies of all updates are updated dynamically.
     # Do not reference 'submoon.a' with the expectation to access the value that was assigned by
@@ -1094,89 +1153,108 @@ def solve_ivp_iterator(n_pix_moon: int, n_pix_submoon: int, y_init: list,
     # Exception: After each simulation, i.e., the end of 'solve_ivp', all values are reset to the values assigned by
     # 'create_submoon_system'.
     outer_counter = 0
-    for i in np.linspace(lower_lim_out, upper_lim_out, n_pix_moon):
+    for i in np.linspace(lower_lim_out, upper_lim_out, n_pix_planet):
         outer_counter += 1
 
         # Inject the variable to actually vary (moon's semi-major-axis)
         # The values of y_init stay constant throughout all simulations, except the quantity that is varied.
-        y_init[1] = i
+        y_init[2] = i
 
         # Update the value of the variable to vary so correct event functions are fired
-        moon.update_semi_major_axis_a(i)
+        planet.update_semi_major_axis_a(i)
 
-        # Start the iteration of the submoon's semi-major-axis from its roche limit to its critical semi-major-axis.
-        lower_lim_in = submoon.get_current_roche_limit()
-        upper_lim_in = submoon.get_current_critical_sm_axis()
+        # Start iteration of the moon's semi-major-axis from its roche limit to its critical semi-major-axis
+        lower_lim_middle = moon.get_current_roche_limit()
+        upper_lim_middle = moon.get_current_critical_sm_axis()
 
-        inner_counter = 0
-        for j in np.linspace(lower_lim_in, upper_lim_in, n_pix_submoon):
-            inner_counter += 1
+        middle_counter = 0
+        for j in np.linspace(lower_lim_middle, upper_lim_middle, n_pix_moon):
+            middle_counter += 1
 
-            # Inject the second variable to vary (submoon's semi-major-axis)
-            y_init[0] = j
-            submoon.update_semi_major_axis_a(j)
+            # Inject the variable to actually vary (moon's semi-major-axis)
+            # The values of y_init stay constant throughout all simulations, except the quantity that is varied.
+            y_init[1] = j
 
-            # Log some more stuff.
-            solve_ivp_iterator_console_logger(planetary_system, mode=1, current_y_init=y_init,
-                                              upper_lim_out=upper_lim_out, upper_lim_in=upper_lim_in,
-                                              outer_counter=outer_counter, inner_counter=inner_counter)
+            # Update the value of the variable to vary so correct event functions are fired
+            moon.update_semi_major_axis_a(j)
 
-            # Sanity-check that e.g., roche limit is not bigger than critical-semi-major axis etc. (bad input).
-            try:
-                sanity_check_initial_values(a_sm_0=y_init[0], a_m_0=y_init[1], a_p_0=y_init[2],
-                                            planetary_system=planetary_system)
-            except InitialValuesOutsideOfLimits as er:
-                premature_termination_logger(er)
-                termination_reason_counter["Some initial value was under the roche or over the a_crit limit"] += 1
-                continue  # Continue to the next j iteration
-            except RocheLimitGreaterThanCriticalSemiMajor as er:
-                premature_termination_logger(er)
-                termination_reason_counter["Some roche limit was greater than a_crit"] += 1
-                break  # Break all of the j iterations and continue to the next i iteration, which completely determines
-                # the value of the roche limit and critical semi-major-axis. In that case, the i-loop (moon-loop) cannot
-                # ever host a stable submoon (j-loop)
+            # Start the iteration of the submoon's semi-major-axis from its roche limit to its critical semi-major-axis.
+            lower_lim_in = submoon.get_current_roche_limit()
+            upper_lim_in = submoon.get_current_critical_sm_axis()
 
-            # Finalize the system
-            planetary_system = bind_system_gravitationally(planetary_system=planetary_system,
-                                                           use_initial_values=use_initial_values, verbose=False)
+            inner_counter = 0
+            for k in np.linspace(lower_lim_in, upper_lim_in, n_pix_submoon):
+                inner_counter += 1
 
-            # define events to track and values to update and a list describing the events
-            list_of_all_events = [update_values, track_submoon_sm_axis_1, track_submoon_sm_axis_2,
-                                  track_moon_sm_axis_1, track_moon_sm_axis_2]
-            keys = ["Values were updated.", "Submoon fell under roche limit", "Submoon exceeded a_crit",
-                    "Moon fell under roche limit", "Moon exceeded a_crit"]
+                # Inject the second variable to vary (submoon's semi-major-axis)
+                y_init[0] = k
+                submoon.update_semi_major_axis_a(k)
 
-            # evolve to 4.5 Bn. years
-            final_time = turn_billion_years_into_seconds(4.5)
+                # Log some more stuff.
+                solve_ivp_iterator_console_logger(planetary_system, mode=1, current_y_init=y_init,
+                                                  upper_lim_out=upper_lim_out, upper_lim_middle=upper_lim_middle,
+                                                  upper_lim_in=upper_lim_in, outer_counter=outer_counter,
+                                                  middle_counter=middle_counter,  inner_counter=inner_counter)
 
-            # Unpack standard gravitational parameters
-            mu_m_sm, mu_p_m, mu_s_p = list_of_std_mus
+                # Sanity-check that e.g., roche limit is not bigger than critical-semi-major axis etc. (bad input).
+                try:
+                    sanity_check_initial_values(a_sm_0=y_init[0], a_m_0=y_init[1], a_p_0=y_init[2],
+                                                planetary_system=planetary_system)
+                except InitialValuesOutsideOfLimits as er:
+                    premature_termination_logger(er)
+                    termination_reason_counter["Some initial value was under the roche or over the a_crit limit"] += 1
+                    continue  # Continue to the next j iteration
+                except RocheLimitGreaterThanCriticalSemiMajor as er:
+                    premature_termination_logger(er)
+                    termination_reason_counter["Some roche limit was greater than a_crit"] += 1
+                    break  # Break all of the k iterations and continue to the next j iteration, which
+                    # completely determines the value of the roche limit and critical semi-major-axis.
+                    # In that case, the j-loop (moon-loop) cannot ever host a stable submoon (k-loop)
 
-            # Solve the problem
-            # noinspection PyTupleAssignmentBalance
-            sol_object = solve_ivp(
-                fun=submoon_system_derivative,
-                t_span=(0, final_time),
-                y0=y_init, method="RK23",
-                args=(planetary_system, mu_m_sm, mu_p_m, mu_s_p),
-                events=list_of_all_events,
-            )
+                # Finalize the system
+                planetary_system = bind_system_gravitationally(planetary_system=planetary_system,
+                                                               use_initial_values=use_initial_values, verbose=False)
 
-            # Unpack solution
-            time_points, sol, t_events, _, _, _, _, status, message, success = unpack_solve_ivp_object(sol_object)
-            y_final = sol[:, -1]
+                # define events to track and values to update and a list describing the events
+                list_of_all_events = [update_values, track_submoon_sm_axis_1, track_submoon_sm_axis_2,
+                                      track_moon_sm_axis_1, track_moon_sm_axis_2]
+                keys = ["Values were updated.", "Submoon fell under roche limit", "Submoon exceeded a_crit",
+                        "Moon fell under roche limit", "Moon exceeded a_crit"]
 
-            # If termination event occurred, find termination reason
-            termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
+                # evolve to 4.5 Bn. years
+                final_time = turn_billion_years_into_seconds(4.5)
 
-            # Document results
-            document_result(status=status, termination_reason=termination_reason, time_points=time_points,
-                            results=results, i=outer_counter, j=inner_counter, y_init=y_init, y_final=y_final,
-                            termination_reason_counter=termination_reason_counter, lifetimes=lifetimes)
+                # Unpack standard gravitational parameters
+                mu_m_sm, mu_p_m, mu_s_p = list_of_std_mus
 
-            plot = False
-            if plot:
-                plt_results(sol_object=sol_object, print_sol_object=False, planetary_system=planetary_system,
-                            list_of_mus=list_of_std_mus)
+                # Solve the problem
+                # noinspection PyTupleAssignmentBalance
+                sol_object = solve_ivp(
+                    fun=submoon_system_derivative,
+                    t_span=(0, final_time),
+                    y0=y_init, method="RK23",
+                    args=(planetary_system, mu_m_sm, mu_p_m, mu_s_p),
+                    events=list_of_all_events,
+                )
 
+                # Unpack solution
+                time_points, sol, t_events, _, _, _, _, status, message, success = unpack_solve_ivp_object(sol_object)
+                y_final = sol[:, -1]
+
+                # If termination event occurred, find termination reason
+                termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
+
+                # Document results
+                document_result(status=status, termination_reason=termination_reason, time_points=time_points,
+                                results=results, i=outer_counter,j=middle_counter, k=inner_counter, y_init=y_init,
+                                y_final=y_final, termination_reason_counter=termination_reason_counter,
+                                lifetimes=lifetimes, whole_solution_object=sol_object)
+
+                plot = False
+                if plot:
+                    plt_results(sol_object=sol_object, print_sol_object=False, planetary_system=planetary_system,
+                                list_of_mus=list_of_std_mus)
+
+    pickle_me_this(f'data_storage/Integration. Num of Pixels (pl, moon, sm) = {n_pix_planet, n_pix_moon, n_pix_submoon}; '
+                   f'omega_init (moon, pl, star) = {y_init[-3:]}', (results, termination_reason_counter, lifetimes))
     return results, termination_reason_counter, lifetimes
