@@ -1,9 +1,4 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.integrate import solve_ivp
-from scipy.constants import G
-from time import time
-from typing import Union, List
+from collections import defaultdict
 from utilities import *
 from creation_of_celestial_bodies import *
 
@@ -26,36 +21,50 @@ mu_s_p = get_standard_grav_parameter(hosting_body=star, hosted_body=planet, chec
 
 # Construct the initial values of the system, which is not reflected in 'create_submoon_system'
 planet_omega = 1/(5*3600)  # Giant Theia Impact => Days were 5 hours long
-moon_distance = moon.a/2.05   # Also moon was apparently 17x closer when it formed
+moon_distance = moon.a   # Also moon was apparently 17x closer when it formed
 corresponding_orbit_frequency_moon = keplers_law_n_from_a_simple(moon_distance, mu_p_m)
 moon_omega = corresponding_orbit_frequency_moon  # The moon has been tidally locked since birth!
 
-# Set the found initial values of the system via attribute dot notation
-submoon.a0 = submoon.a
-moon.a0 = moon_distance
-planet.a0 = planet.a
+# Set the found initial values of the system via update class method
+submoon.update_semi_major_axis_a(submoon.a)
+moon.update_semi_major_axis_a(moon_distance)
+planet.update_semi_major_axis_a(planet.a)
 
-moon.omega0 = moon_omega
-planet.omega0 = planet_omega
-star.omega0 = star.omega
+moon.update_spin_frequency_omega(moon_omega)
+planet.update_spin_frequency_omega(planet_omega)
+star.update_spin_frequency_omega(star.omega)
 
 # Hard copy of all s.m.axes and spin frequencies of the system. Their values are updated dynamically in each iteration.
 # Through the copy, `reset_to_default` can be called, which reassigns the values given on creation by
 # `create_submoon_system`.
-copy_of_default_vars = [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega]
-names = ['submoon.a', 'moon.a', 'planet.a', 'moon.omega', 'planet.omega', 'star.omega']
+y_init = [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega]
 
-# The index of the variable to vary. E.g., 1 for `moon.a`.
-index_to_vary = 1
-quantity_to_vary = copy_of_default_vars[index_to_vary]
-
-# Define the resolution, i.e., how many simulations to do
-n_pix = 100
-
-result = solve_ivp_iterator(key=names[index_to_vary], index_to_vary=index_to_vary, upper_lim=quantity_to_vary,
-                            n_pix=100, y_init=[submoon.a0, moon.a0, planet.a0, moon.omega0, planet.omega0, star.omega0],
-                            y_default=copy_of_default_vars, planetary_system=[star, planet, moon, submoon],
+# Define the resolution, i.e., how many simulations to do and other parameters of the simulation
+n_pix_moon = 20
+n_pix_submoon = 5
+low_lim = moon.get_current_roche_limit()
+up_lim = moon.get_current_critical_sm_axis()
+result = solve_ivp_iterator(n_pix_moon=n_pix_moon, n_pix_submoon=n_pix_submoon, y_init=y_init,
+                            planetary_system=[star, planet, moon, submoon],
                             list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p])
 
-print("Result: ", result)
+hits = result[0]
+hit_counts = defaultdict(int)
+for hit in hits:
+    hit_counts[hit] += 1
 
+print("\n\n--------RESULTS--------\n\n")
+print("\n------ Stability states (-1: Termination, NUM ER: Numerical error, +1: Longevity):")
+for key, value in hit_counts.items():
+    print(f'{key}: {value}')
+print("\n------")
+
+print("\n------ Histogram of termination reasons:")
+for key, value in result[1].items():
+    print(f'{key}: {value}')
+print("\n------")
+
+print("\n------ Longest lifetime objects (Second element is lifetime in years):")
+max_subarray = max(result[2], key=lambda x: x[1])
+index_of_longest_lifetime_array = result[2].index(max_subarray)
+print(result[2][index_of_longest_lifetime_array])
