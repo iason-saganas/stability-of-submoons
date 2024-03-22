@@ -16,3 +16,8 @@ algorithm would work best in this situation. A tree visualizing the variable dep
 There is a missing factor mass_moon^2 in equation second summand of the equation omega_dot_p. Fix this in the future.
 
 ![App Screenshot](https://github.com/iason-saganas/stability-of-submoons/blob/377c524695f689d65f1db96b6406a9282f1362a9/media/Screenshot%20of%20Dependencies%20Visualization.png)
+
+The architecture of the code and logical structure of solving the differential equations is 
+as follows: 
+
+![Code Architecture](https://raw.githubusercontent.com/iason-saganas/stability-of-submoons/master/media/solver-architecture.png)
