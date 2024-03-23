@@ -1,13 +1,12 @@
 import numpy as np
-from numpy import ndarray, dtype
 from scipy.constants import G
 from warnings import warn as raise_warning
 import pandas as pd
-from typing import Union, List, Any
-import matplotlib.pyplot as plt
+from typing import Union, List
 from scipy.integrate import solve_ivp
 from style_components.matplotlib_style import *
 import pickle
+from style_components.voxel_plotter import plot_3d_voxels
 
 AU = 1.496e11
 
@@ -18,7 +17,8 @@ __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from
            'get_omega_derivative_factors_experimental', 'get_omega_factors', 'unpack_solve_ivp_object',
            'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'custom_experimental_plot',
            'submoon_system_derivative', 'update_values', 'track_submoon_sm_axis_1', 'track_submoon_sm_axis_2',
-           'track_moon_sm_axis_1', 'track_moon_sm_axis_2', 'reset_to_default', 'solve_ivp_iterator', 'showcase_results']
+           'track_moon_sm_axis_1', 'track_moon_sm_axis_2', 'reset_to_default', 'solve_ivp_iterator', 'showcase_results',
+           'pickle_me_this', 'unpickle_me_this']
 
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
@@ -1070,9 +1070,11 @@ def unpickle_me_this(filename):
     return data
 
 
-def showcase_results(result):
+def showcase_results(result, n_pix_planet=None, n_pix_moon=None, n_pix_submoon=None):
     from collections import defaultdict
-    hits = result[0]
+
+    hits, termination_reason_counter, lifetimes = result
+
     hit_counts = defaultdict(int)
     for hit in hits:
         hit_counts[hit] += 1
@@ -1084,14 +1086,34 @@ def showcase_results(result):
     print("\n------")
 
     print("\n------ Histogram of termination reasons:")
-    for key, value in result[1].items():
+    for key, value in termination_reason_counter.items():
         print(f'{key}: {value}')
     print("\n------")
 
     print("\n------ Longest lifetime object (Second element is lifetime in years):")
-    max_subarray = max(result[2], key=lambda x: x[1])
-    index_of_longest_lifetime_array = result[2].index(max_subarray)
-    print(result[2][index_of_longest_lifetime_array])
+    max_subarray = max(lifetimes, key=lambda x: x[1])
+    index_of_longest_lifetime_array = lifetimes.index(max_subarray)
+    print(lifetimes[index_of_longest_lifetime_array])
+
+    if n_pix_planet is not None:
+        if any((n_pix_moon, n_pix_submoon)) is None:
+            raise ValueError("n_pix_moon and n_pix_submoon have to be provided")
+
+        normalization = 4.5e9  # years
+        coordinates = np.array([item[0] for item in lifetimes])
+        values = np.array([item[1] for item in lifetimes])/normalization
+
+        # Concatenate the arrays along the second axis
+        merge = np.hstack((coordinates, np.expand_dims(values, axis=1)))
+
+        # Create an empty Xdim x Ydim x Zdim x1 array
+        full_4D_data = np.zeros((n_pix_submoon, n_pix_moon, n_pix_submoon, 1))
+        # Iterate over each row and assign color channel value
+        for row in merge:
+            x, y, z, color = row
+            full_4D_data[int(x) - 1, int(y) - 1, int(z) - 1, 0] = color
+
+        plot_3d_voxels(data=full_4D_data, multi_view=False, sampling_ratio=1, skew_factor=1, colormap='RdYlBu_r')
 
 
 def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y_init: list, planetary_system: list,
@@ -1201,10 +1223,12 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                     sanity_check_initial_values(a_sm_0=y_init[0], a_m_0=y_init[1], a_p_0=y_init[2],
                                                 planetary_system=planetary_system)
                 except InitialValuesOutsideOfLimits as er:
+                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0])  # coordinates, 0 years stable
                     premature_termination_logger(er)
                     termination_reason_counter["Some initial value was under the roche or over the a_crit limit"] += 1
                     continue  # Continue to the next j iteration
                 except RocheLimitGreaterThanCriticalSemiMajor as er:
+                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0])  # coordinates, 0 years stable
                     premature_termination_logger(er)
                     termination_reason_counter["Some roche limit was greater than a_crit"] += 1
                     break  # Break all of the k iterations and continue to the next j iteration, which
