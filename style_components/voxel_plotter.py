@@ -3,8 +3,10 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
 from matplotlib import cm
+from matplotlib.colors import LinearSegmentedColormap
 
-def plot_3d_voxels(data, transparency_threshold=0, skew_factor=1, sampling_ratio=0.3, multi_view=True, colormap='magma',save_img=False ,channel_first=False):
+def plot_3d_voxels(data, bz, transparency_threshold=0, skew_factor=1, sampling_ratio=0.3, multi_view=True, colormap='magma',save_img=False ,channel_first=False,
+                   ):
 
     # https://github.com/XxGothicfanxX/Voxel-Plotter-py
 
@@ -32,8 +34,6 @@ def plot_3d_voxels(data, transparency_threshold=0, skew_factor=1, sampling_ratio
 
     """
 
-
-
     # Check if the input data is a 4D numpy array
     if not isinstance(data, np.ndarray) or data.ndim != 4:
         raise ValueError("Input data must be a 4D numpy array")
@@ -54,19 +54,45 @@ def plot_3d_voxels(data, transparency_threshold=0, skew_factor=1, sampling_ratio
     else:
         data = data.reshape((1, data.shape[0], data.shape[1], data.shape[2]))
 
+    X, Y, Z, values = bz
 
-    # Number of slices (z-dimension in the 3D space)
-    num_slices = data.shape[-1]
+    print("X;Y;Z")
+    print(X,Y,Z)
 
     # Create figure and grid
     fig = plt.figure(figsize=(12, 8))
     gs = gridspec.GridSpec(5, 3, height_ratios=[1] * 5, width_ratios=[1,3,1])
     ax_main = plt.subplot(gs[:, 1], projection='3d')
+    ax_main.view_init(30, 340)
+
+    ax_main.set_xlabel(r'$a_p [\mathrm{AU}]$', fontsize=20, rotation=150, labelpad=20)
+    ax_main.set_ylabel(r'$a_m [\mathrm{LU}]$', fontsize=20, labelpad=20)
+    ax_main.set_zlabel(r'$a_{sm} [\mathrm{SLU}]$', fontsize=20, rotation=90, labelpad=20)
+
+    # p = ax_main.scatter(voxel_indices[:, 1], voxel_indices[:, 2], voxel_indices[:, 3], s=50, c=colors,  # marker='s',
+    #                    cmap=plt.get_cmap("magma"))
+    N = 256
+    color_array = plt.get_cmap('Blues')(range(N))
+    # change alpha values
+    color_array[:, 3] = np.linspace(0, 1, N)  # Let the alpha channel linearly increase, importantly,
+    # let the value 0 correspond to the alpha value 0 such that unstable regions are transparent
+    #color_array[:, 2] = np.linspace(0, 1, N)  # Let the green channel linearly increase
+    #color_array[:, 1] = np.linspace(0, 1, N)  # Let the blue channel linearly increase
+    #color_array[:, 0] = np.linspace(0, 1, N)  # Let the red channel linearly increase
+    newcmp = LinearSegmentedColormap.from_list(name="myColorMap", colors=color_array)
+    p = ax_main.scatter(X, Y, Z, s=1, c=values,
+                        cmap=newcmp)
+
+    # Generate the colorbar with adjusted position
+    cbar = fig.colorbar(p, ax=ax_main, pad=0.2, shrink=0.3)
+
+    plt.show()
 
     # Create colormap and calculate color and transparency for non-zero voxels
     magma_cmap = cm.get_cmap(colormap)
     voxel_indices = np.argwhere(data > 0)
     voxel_values = data[data > 0] / np.max(data)
+
 
     # Random sampling of non-zero points
     sampled_indices = np.random.choice(np.arange(voxel_indices.shape[0]), size=int(voxel_indices.shape[0] * sampling_ratio), replace=False)
@@ -77,10 +103,15 @@ def plot_3d_voxels(data, transparency_threshold=0, skew_factor=1, sampling_ratio
     skewed_values = voxel_values ** skew_factor
 
     colors = magma_cmap(skewed_values)
+    print("color data: ", colors)
     colors[:, 3] = np.where(voxel_values > transparency_threshold, voxel_values, 0)
+    print("After manipulation: ", colors)
 
     # Plot the main 3D scatter plot
-    ax_main.scatter(voxel_indices[:, 1], voxel_indices[:, 2], voxel_indices[:, 3], c=colors, marker='s')
+    p = ax_main.scatter(voxel_indices[:, 1], voxel_indices[:, 2], voxel_indices[:, 3], s=50, c=colors, #marker='s',
+                        cmap=plt.get_cmap("magma"))
+
+    fig.colorbar(p, ax=ax_main)
 
     if multi_view==True:
         #Diffrent views

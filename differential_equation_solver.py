@@ -40,7 +40,7 @@ n_pix_submoon = 30
 
 # Set the resolution, i.e., how many simulations to do and other parameters of the simulation
 result = solve_ivp_iterator(n_pix_planet=n_pix_planet, n_pix_moon=n_pix_moon, n_pix_submoon=n_pix_submoon,
-                            y_init=y_init, planetary_system=[star, planet, moon, submoon],
-                            list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p], upper_lim_planet=30)
+                            y_init=y_init, planetary_system=[star, planet, moon, submoon], debug_plot=False,
+                            list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p], upper_lim_planet=30, lower_lim_planet=0.5)
 
-showcase_results(result, n_pix_planet=n_pix_planet, n_pix_moon=n_pix_moon, n_pix_submoon=n_pix_submoon)
+showcase_results(result)

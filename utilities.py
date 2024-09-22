@@ -7,18 +7,65 @@ from scipy.integrate import solve_ivp
 from style_components.matplotlib_style import *
 import pickle
 from style_components.voxel_plotter import plot_3d_voxels
+from matplotlib.ticker import FuncFormatter
+import datetime
 
 AU = 1.496e11
+LU = 384.4e6  # 'Lunar unit', the approximate distance between earth and earth's moon
+SLU = LU/20  # 'Sublunar unit', a twentieth of a lunar unit
+
 
 __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from_n', 'keplers_law_n_from_a_simple',
            'get_standard_grav_parameter', 'get_hill_radius_relevant_to_body', 'get_critical_semi_major_axis',
            'get_roche_limit', 'analytical_lifetime_one_tide', 'dont', 'get_solar_system_bodies_data',
            'CelestialBody', 'turn_seconds_to_years', 'get_a_derivative_factors_experimental', 'get_a_factors',
            'get_omega_derivative_factors_experimental', 'get_omega_factors', 'unpack_solve_ivp_object',
-           'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'custom_experimental_plot',
+           'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'state_vector_plot',
            'submoon_system_derivative', 'update_values', 'track_submoon_sm_axis_1', 'track_submoon_sm_axis_2',
            'track_moon_sm_axis_1', 'track_moon_sm_axis_2', 'reset_to_default', 'solve_ivp_iterator', 'showcase_results',
            'pickle_me_this', 'unpickle_me_this']
+
+
+class Tracker:
+    """
+    A simple class in whose attributes the state vector can be stored in each iteration by calling inside of
+    the `update_values` function.
+    This serves as the datastructure for the stiffness detection scheme.
+    `tracker = Tracker()` and `tracker.y` will get an array whose elements are arrays representing the state vector
+    at that time point with the entries `a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y` or their derivatives.
+    """
+
+    def __init__(self):
+        self.y = None
+        self.dy_dt = None
+        self.t = None
+        self.eta_chain = []
+
+    def add(self, new_y_point, new_dy_dt_ypoint, new_t_point):
+        y = np.array([new_y_point])
+        dydt = np.array([new_dy_dt_ypoint])
+        t = np.array([new_t_point])
+        if self.y is None:
+            self.y = y
+            self.dy_dt = dydt
+            self.t = t
+        else:
+            self.y = np.vstack((self.y, y))
+            self.dy_dt = np.vstack((self.dy_dt, dydt))
+            self.t = np.append(self.t, t)
+
+    def add_eta(self, eta):
+        self.eta_chain.append(eta)
+
+    def clear(self):
+        self.y = None
+        self.dy_dt = None
+        self.t = None
+        self.eta_chain = []
+
+
+# Initialize global tracker object
+tracker = Tracker()
 
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
@@ -36,6 +83,11 @@ def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'Celestia
     if distance != 1:
         raise ValueError(f'The inputted bodies cannot be in direct orbit of each other since their hierarchy numbers'
                          f' are too far apart. Expected difference between hierarchy numbers: 1. Got: {distance}')
+
+
+# Define a function to format the y-axis labels with desired decimal places
+def format_func(value, tick_number):
+    return f'{np.round(value, 2)}'
 
 
 def keplers_law_n_from_a(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody') -> float:
@@ -356,6 +408,8 @@ class CelestialBody:
         self.descriptive_index = descriptive_index
         self.name = name
         self.hn = hierarchy_number
+        self.oscillation_counter = 0  # How many times the signum function flipped the sign the semi-major-axis
+        # or spin frequency derivative
 
         if hierarchy_number == 1:
             # Star has no hosting body.
@@ -641,86 +695,97 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
     return planetary_system
 
 
-def custom_experimental_plot(time_points, solution, derivative, planetary_system, list_of_mus):
+def state_vector_plot(time_points, solution, derivative, planetary_system, list_of_mus, show=True, save=False):
     """
-    :ToDo Beautify plots and write better documentation and make plotting code more concise
+    :param planetary_system: The list of CelestialBodies.
     :param time_points: The time points at which solutions were found
     :param solution: numpy array, the y solution coming out of 'solve_ivp'
     :param derivative: The derivative (callable)
     :return:
     """
 
-    fig, axs = plt.subplots(3, 1, figsize=(15, 8))
+    time_norm = 3600*24*365*1e9  # turn seconds into Gyr's
+    time_normed = time_points/time_norm
 
-    for y_sol, color, label, axis in zip(solution[:3], [red, green, blue],
-                                         [r"$a_{\mathrm{sm}}$", r"$a_{\mathrm{m}}$", r"$a_{\mathrm{p}}$"], axs):
-        axis.plot(time_points, y_sol, marker=".", color=color,
-                  label=label + f' num of points: {len(y_sol)}')
-        axis.plot(time_points, y_sol, linestyle="-", color=color)
-        axis.legend()
-
-    axs[2].set_xlabel(r"$t$ in $\mathrm{s}$")
-    axs[2].set_ylabel("$a(t)$ in meters")
-    axs[0].set_title('Evolution of Semi-Major-Axes of Bodies $a(t)$',
-                     fontsize=16)  # Adjust fontsize and y position as needed
-    plt.tight_layout()
-    plt.show()
-
-    fig, axs = plt.subplots(3, 1, figsize=(15, 8))
-
-    for y_sol, color, label, axis in zip(solution[3:6], [red, green, blue],
-                                         [r"$\Omega(t)$ moon", r"$\Omega(t)$ planet", r"$\Omega(t)$ star"], axs):
-        axis.plot(time_points, y_sol * 1000, marker=".", color=color, label=label + f' num of points: {len(y_sol)}')
-        axis.plot(time_points, y_sol * 1000, linestyle="-", color=color)
-        axis.legend()
-
-    axs[2].set_xlabel(r"$t$ in $\mathrm{s}$")
-    axs[2].set_ylabel(r"$\Omega(t)$ in $\mathrm{mHz}$")
-    axs[0].set_title(r'Evolution of Spin-Frequencies of Bodies $\Omega (t)$', fontsize=16,
-                     y=1.05)  # Adjust fontsize and y position as needed
-    plt.tight_layout()
-    plt.show()
-
+    # fig, axes = plt.subplots(3, 2, sharex=True, figsize=(12,8))
+    fig, axes = plt.subplots(3, 2, sharex=True, figsize=(8,6))
+    # solution[:6] contains: a_sm, a_m, a_p, omega_m, omega_p, omega_s, but `axes` is ordered as
+    # a_sm, omega_m, a_m, omega_p, a_p, omega_s; so we reorder the `axes` object.
     dy_dt = np.array(derivative(time_points, solution, planetary_system, *list_of_mus))
+    evolutions = solution[:6]
+    derivatives = dy_dt[:6]
+    ordering =  np.array([0, 2, 4, 1, 3, 5])
+    reordered_axes = axes.flatten()[ordering]
 
-    # Plot the derivative values against time
-    fig, axs = plt.subplots(3, 1, figsize=(15, 8))
+    y_labels = [r"$a_{\mathrm{sm}}(t)$", r"$a_{\mathrm{m}}(t)$", r"$a_{\mathrm{p}}(t)$",
+                r"$\Omega_{\mathrm{m}}(t)$", r"$\Omega_{\mathrm{p}}(t)$", r"$\Omega_{\mathrm{s}}(t)$"]
+    legend_labels = ["SLU", r"LU or $\mathrm{\mu}$Hz ", r"AU or $\mathrm{\mu}$Hz", r"$\mathrm{\mu}$Hz",
+                     r"$\mathrm{\mu}$Hz", r"$\mathrm{\mu}$Hz"]
+    der_n = turn_billion_years_into_seconds(1e-3)  # derivative norm, have to be multiplied to get radians or meters per
+    # Myrs as unit
+    y_normalizations = [[SLU, 1/der_n], [LU,1/der_n], [AU,1/der_n], [1/1e6,1/der_n], [1/1e6, 1/der_n], [1/1e6, 1/der_n]]
+    # `y_normalizations` elements are [evol norm, deriv norm].
+    # 1/factor gets the factor multiplied instead of divided.
+    # frequencies will be in microhertz, semi-major-axis in SLU, LU or AU and derivatives in meters or radians per Myr.
+    colors = [red, green, blue, green, blue, yellow]
+    show_legend_labels = [True, True, True, False, False, True]
 
-    for y_sol, color, label, axis in zip(dy_dt[:3], [red, green, blue], [r"$\frac{\mathrm{d}a}{\mathrm{d}t}$ submoon",
-                                                                         r"$\frac{\mathrm{d}a}{\mathrm{d}t}$ moon",
-                                                                         r"$\frac{\mathrm{d}a}{\mathrm{d}t}$ planet"],
-                                         axs):
-        axis.plot(time_points, 100 * y_sol * (365 * 24 * 3600), marker=".", color=color,
-                  label=label + f' num of points: {len(y_sol)}')
-        axis.plot(time_points, 100 * y_sol * (365 * 24 * 3600), linestyle="-", color=color)
-        axis.legend()
+    handles, labels = [], []
 
-    axs[2].set_xlabel(r"$t$ in $\mathrm{s}$")
-    axs[2].set_ylabel(r"$\dot{a}(t)$ in $\mathrm{\frac{cm}{yr}}$")
-    axs[0].set_title(r'Evolution of Rate of Change of Semi-Major-Axes of Bodies $\frac{\mathrm{d}a}{\mathrm{d}t} (t)$',
-                     fontsize=16,
-                     y=1.05)  # Adjust fontsize and y position as needed
+    for ax, evolution, color, y_label, norms, legend_label, show_legend_label, derivative in zip(
+            reordered_axes,
+            evolutions,
+            colors,
+            y_labels,
+            y_normalizations,
+            legend_labels,
+            show_legend_labels,
+            derivatives):
+
+        y_norm = norms[0]
+        dy_dt_norm = norms[1]
+        ax2 = ax.twinx()
+        evol = evolution / y_norm
+        der = derivative / dy_dt_norm
+        plot_objects = ax.plot(time_normed, evol, color=color, lw=2, ls="-", label=legend_label,
+                               markersize=0)
+        # ax2.plot(time_normed, der, color=color, lw=2, ls="--", markersize=0)
+        ax.set_ylabel(y_label)
+        ax.yaxis.set_major_formatter(FuncFormatter(format_func))
+        # ax2.yaxis.set_major_formatter(FuncFormatter(format_func))
+        ax.set_ylim(min(evol)-0.1, max(evol)+0.1)  # in the units chosen (AU, LU, SLU and μHz), the y-scale of the
+        # solution is in the same order of mag or larger than 0.1. Setting this ylim is sensible since microbehaviour
+        # of the solution under this scale is not of interest.
+        if show_legend_label:
+            handles.extend(plot_objects)
+            labels.append(plot_objects[0].get_label())
+
     plt.tight_layout()
-    plt.show()
+    plt.subplots_adjust(bottom=0.15)  # Increase this value to add more space at the bottom
+    fig.text(0.5, 0.05, 'Time passed in Billions of years', ha='center', va='center', fontsize=24, fontweight="bold")
+    fig.align_ylabels(axes[:, 0])  # First column
+    fig.align_ylabels(axes[:, 1])  # Second column
 
-    fig, axs = plt.subplots(3, 1, figsize=(15, 8))
+    # Adjust bottom margin for space for the legend
+    plt.subplots_adjust(top=0.85)  # Increase the top margin to make space for the legend
+    fig.legend(handles, labels, loc='upper left', bbox_to_anchor=(0, 1), ncol=3, fontsize=12)
 
-    for y_sol, color, label, axis in zip(dy_dt[3:6], [red, green, blue],
-                                         [r"$\frac{\mathrm{d}\Omega}{\mathrm{d}t}$ moon",
-                                          r"$\frac{\mathrm{d}\Omega}{\mathrm{d}t}$ planet",
-                                          r"$\frac{\mathrm{d}\Omega}{\mathrm{d}t}$ star"],
-                                         axs):
-        axis.plot(time_points, y_sol * 1000, marker=".", color=color, label=label + f' num of points: {len(y_sol)}')
-        axis.plot(time_points, y_sol * 1000, linestyle="-", color=color)
-        axis.legend()
+    # Increase vertical space between columns
+    plt.subplots_adjust(wspace=0.5)
 
-    axs[2].set_xlabel(r"$t$ in $\mathrm{s}$")
-    axs[2].set_ylabel(r"$\dot{\Omega}(t)$ in $\mathrm{mHz}$")
-    axs[0].set_title(r'Evolution of Rate of Change of Spin-Frequencies of '
-                     r'Bodies $\frac{\mathrm{d}\Omega}{\mathrm{d}t}(t)$', fontsize=16,
-                     y=1.05)  # Adjust fontsize and y position as needed
-    plt.tight_layout()
-    plt.show()
+    # Finally, insert information about the used units
+    info = (r"$\mathrm{AU}$ astronomical unit, $\mathrm{LU}$ 'lunar unit' (mean earth-moon-distance), " + "\n" +
+            r"$\mathrm{SLU}$ 'sub-lunar unit' ($1/20$th of a $\mathrm{LU}$). Number of steps taken: " +
+            str(len(time_normed)) + ".")
+    fig.text(0.45, 0.974, info, ha='left', va='top', fontsize=10,
+             bbox=dict(facecolor='white', edgecolor='lightgray', boxstyle='round,pad=0.5'))
+
+    if save:
+        now = datetime.datetime.now()
+        plt.savefig("data_storage/figures/" + str(now)+ ".png", dpi=30)
+    if show:
+        plt.show()
+    plt.clf()
 
 
 # Define system of differential equations
@@ -789,6 +854,82 @@ def reset_to_default(y: list, planetary_system: List['CelestialBody']):
     submoon.update_semi_major_axis_a(a_m_sm)
 
 
+''' Delete if not used 
+def calculate_sign_changes(arr):
+    """
+    Takes an array and calculates how often the sign of the elements flipped from one element to another
+    :param arr: np.array
+    :return:
+    """
+    arr = np.array(arr)
+    sign_changes = np.diff(np.sign(arr)) != 0
+    return np.sum(sign_changes)
+'''
+
+
+def check_if_stiff(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    """
+    If the number of oscillations at any interval length (sign change in the
+    derivative of any variable) is large relative to the time interval, the problem is likely to be stiff.
+    In that case, skip this iteration.
+    This assumes that stiff system will always change sign from one step directly to the next, e.g.
+    calculate_sign_changes([1, 2, 3, -1, -1]) will return 1, calculate_sign_changes([-1, 2, -3, 1, -1]) four.
+    """
+    dy_dt = submoon_system_derivative(t, y, planetary_system, mu_m_sm, mu_p_m, mu_s_p)
+    # Update tracker
+    tracker.add(y, dy_dt, t)
+    current_step_index = np.where(tracker.t == t)[0][0]
+
+    # The columns of the tracker.y matrix, i.e. the elements (=rows) of the tracker.y.T matrix represent the time
+    # evolution of a single variable
+    dy_dt_evolutions = tracker.dy_dt.T
+    eta = np.max([stiffness_coefficient(derivative_evol) for derivative_evol in dy_dt_evolutions])
+    tracker.add_eta(eta)
+    return tracker.eta_chain[current_step_index] - 0.8
+
+
+def stiffness_coefficient(arr, subarray_length=5, tolerance_percent=68):
+    """
+    Calculates the stiffness coefficient for a given array.
+
+    Parameters:
+    - arr: A 1D numpy array of numerical values.
+    - subarray_length: Length of each subarray to divide the array into.
+    - tolerance_percent: Percentage of subarray length to define closeness to 0 (default is 68%).
+
+    Returns:
+    - A float representing the fraction of subarrays with a summed value close to 0, meaning that the values of the
+    array average out on small scales => Small scale oscillations.
+    """
+    arr = np.array(arr)
+    total_length = len(arr)
+
+    if subarray_length <= 0 or subarray_length > total_length:
+        # The array is too small to accurately infer the stiffness, return a small number so stiffness detector is not
+        # triggered (triggered at 0.8)
+        return 0.01
+        # raise ValueError("Subarray length must be positive and less than or equal to the length of the array.")
+
+    if subarray_length < 5:
+        raise ValueError("Each subarray must be at least length 5.")
+
+    subarray_sums = []
+
+    for i in range(0, total_length - subarray_length + 1, subarray_length):
+        subarray = arr[i:i + subarray_length]
+        converted = np.where(subarray < 0, -1, 1)
+        subarray_sum = np.sum(converted)
+        subarray_sums.append(subarray_sum)
+
+    subarray_sums = np.array(subarray_sums)
+
+    tolerance = (tolerance_percent / 100) * subarray_length
+
+    close_to_zero_fraction = np.sum(np.abs(subarray_sums) <= tolerance) / len(subarray_sums)
+
+    return close_to_zero_fraction
+
+
 def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
     """
     Note
@@ -826,7 +967,6 @@ def track_submoon_sm_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_
     #    print("\t\tThe submoon's semi-major-axis fell under the moon's roche limit.")
     #    print("val of a_sm: ", a_m_sm, " roche limit: ", rl)
     return a_m_sm - rl
-
 
 def track_submoon_sm_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
     # Unpack all values
@@ -867,6 +1007,8 @@ track_submoon_sm_axis_1.terminal = True
 track_submoon_sm_axis_2.terminal = True
 track_moon_sm_axis_1.terminal = True
 track_moon_sm_axis_2.terminal = True
+check_if_stiff.terminal = True
+check_if_stiff.direction = 1
 
 
 def solve_ivp_iterator_console_logger(planetary_system, mode=0, current_y_init=None, upper_lim_out=None,
@@ -1027,14 +1169,15 @@ def log_results(status, termination_reason, time_points):
     return stability_status
 
 
-def plt_results(sol_object, planetary_system, list_of_mus, print_sol_object=False):
+def plt_results(sol_object, planetary_system, list_of_mus, print_sol_object=False, save=False, show=True):
     # Unpack variables outputted by solution object.
     (time_points, solution, t_events, y_events, num_of_eval, num_of_eval_jac, num_of_lu_decompositions, status,
      message, success) = unpack_solve_ivp_object(sol_object)
 
     if print_sol_object:
         print("sol_object : ", sol_object)
-    custom_experimental_plot(time_points, solution, submoon_system_derivative, planetary_system, list_of_mus)
+    state_vector_plot(time_points, solution, submoon_system_derivative, planetary_system, list_of_mus, show=show,
+                      save=save)
 
 
 def find_termination_reason(status, t_events, keys):
@@ -1070,14 +1213,23 @@ def unpickle_me_this(filename):
     return data
 
 
-def showcase_results(result, n_pix_planet=None, n_pix_moon=None, n_pix_submoon=None):
+def consistency_check_volume(expected_volume, actual_volume):
+    if actual_volume != expected_volume:
+        raise_warning(f"\nThere is a mismatch between the expected volume of the grid search (n_pl * n_moon * n_submoon) "
+                      f"\n({expected_volume}) and the actual volume ({actual_volume}), which means some cases"
+                      f"\nhave been overlooked. This is not detrimental, but leads to the solution cube being lower res "
+                      f"than necessary.")
+
+
+def showcase_results(result):
     from collections import defaultdict
 
-    hits, termination_reason_counter, lifetimes = result
+    hits, termination_reason_counter, lifetimes, physically_varied_ranges = result
 
     hit_counts = defaultdict(int)
     for hit in hits:
         hit_counts[hit] += 1
+
 
     print("\n\n--------RESULTS--------\n\n")
     print("\n------ Stability states (-1: Termination, NUM ER: Numerical error, +1: Longevity):")
@@ -1095,29 +1247,135 @@ def showcase_results(result, n_pix_planet=None, n_pix_moon=None, n_pix_submoon=N
     index_of_longest_lifetime_array = lifetimes.index(max_subarray)
     print(lifetimes[index_of_longest_lifetime_array])
 
-    if n_pix_planet is not None:
-        if any((n_pix_moon, n_pix_submoon)) is None:
-            raise ValueError("n_pix_moon and n_pix_submoon have to be provided")
+    varied_planet_range, varied_moon_range, varied_submoon_range = tuple([physically_varied_ranges[i] for i in range(3)])
+    n_pix_planet, n_pix_moon, n_pix_submoon = tuple([len(physically_varied_ranges[i]) for i in range(3)])
 
-        normalization = 4.5e9  # years
-        coordinates = np.array([item[0] for item in lifetimes])
-        values = np.array([item[1] for item in lifetimes])/normalization
+    consistency_check_volume(expected_volume=n_pix_planet * n_pix_moon * n_pix_submoon, actual_volume=len(lifetimes))
 
-        # Concatenate the arrays along the second axis
-        merge = np.hstack((coordinates, np.expand_dims(values, axis=1)))
+    normalization = 4.5e9  # years
+    coordinates = np.array([item[0] for item in lifetimes])  # This is nx3 matrix where each row represents a
+    # coordinate point: [[ 1  1  1], [ 1  1  2], [ 1  1  3] ... ].
+    X = [coordinate_triple[0] for coordinate_triple in coordinates]  # Planet semi-major-axis proxy
+    Y = [coordinate_triple[1] for coordinate_triple in coordinates]  # Moon -""-
+    Z = [coordinate_triple[2] for coordinate_triple in coordinates]  # Submoon -""-
 
-        # Create an empty Xdim x Ydim x Zdim x1 array
-        full_4D_data = np.zeros((n_pix_submoon, n_pix_moon, n_pix_submoon, 1))
-        # Iterate over each row and assign color channel value
-        for row in merge:
-            x, y, z, color = row
-            full_4D_data[int(x) - 1, int(y) - 1, int(z) - 1, 0] = color
+    X = np.array([varied_planet_range[coordinate_proxy - 1] for coordinate_proxy in X])/AU
+    # Planet semi-major-axis physical in AU
+    Y = np.array([varied_moon_range[coordinate_proxy - 1] for coordinate_proxy in Y])/LU  # Moon -""-
+    # in earth-moon distances
+    Z = np.array([varied_submoon_range[coordinate_proxy - 1] for coordinate_proxy in Z])/SLU  # Submoon -""- in
+    # twentieths of earth-moon distance
+    values = np.array([item[1] for item in lifetimes])/normalization  # a number between 0 and 1, if
+    # 1, equates to a point in phase space that has a stable lifetime of `normalization` years.
 
-        plot_3d_voxels(data=full_4D_data, multi_view=False, sampling_ratio=1, skew_factor=1, colormap='RdYlBu_r')
+    export_data_for_example = False
+    if export_data_for_example:
+        # stability transition region, this is in order to post an example unto `https://iason-saganas.github.io`
+        transition_indices = np.where((values >= 0.75) & (values <=0.9))
+
+        copy_xyz_data_to_clipboard = False
+        if copy_xyz_data_to_clipboard:
+            import pyperclip
+            # Convert array to string with elements separated by commas
+            # array_str = '\n'.join(['[' + ', '.join(map(str, row)) + '],' for row in coordinates])
+            values_to_copy = list(zip(X[transition_indices], Y[transition_indices], Z[transition_indices]))
+            array_str = '\n'.join(['[' + ', '.join(map(str, coordinate_tuple)) + '],' for coordinate_tuple in values_to_copy])
+
+            # Copy the string to the clipboard
+            pyperclip.copy(array_str)
+
+    # Concatenate the arrays along the second axis
+    merge = np.hstack((coordinates, np.expand_dims(values, axis=1)))
+
+    # Create an empty Xdim x Ydim x Zdim x1 array
+    full_4D_data = np.zeros((n_pix_submoon, n_pix_moon, n_pix_submoon, 1))
+    # Iterate over each row and assign color channel value
+    for row in merge:
+        x, y, z, color = row
+        full_4D_data[int(x) - 1, int(y) - 1, int(z) - 1, 0] = color
+
+    plot_3d_voxels(data=full_4D_data, multi_view=False, sampling_ratio=1, skew_factor=1, colormap='RdYlBu_r',
+                   bz=[X, Y, Z, values], transparency_threshold=.1)
+
+
+def jacobian(t, y, *args):
+    """
+    The calculations of the Jacobian were done by hand.
+    Note how these calculations inherently assume ∂_x sgn(x) = 0, which is wrong, but should be a good approximation
+    if synchronicity is never achieved.
+    But, since synchronicity is not something we want to forbid a priori, I suggest to not use this Jacobian.
+    Although finite difference approximation reproduces quite well what this jacobian does.
+    :return:
+    """
+    # print("Current time step in Myrs: ", t/(3600*24*365*1e6))
+    jac = np.zeros((6,6))
+
+    planetary_system, mu_m_sm, mu_p_m, mu_s_p = args
+    star, planet, moon, submoon = planetary_system
+
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+
+    n_m_sm = keplers_law_n_from_a_simple(a_m_sm, mu_m_sm)
+    n_p_m = keplers_law_n_from_a_simple(a_p_m, mu_p_m)
+    n_s_p = keplers_law_n_from_a_simple(a_s_p, mu_s_p)
+
+    eq1 = get_a_factors(hosted_body=submoon) * np.sign(omega_m-n_m_sm) * (-11/2) * a_m_sm ** (-13/2)
+    eq2 = get_a_factors(hosted_body=moon) * np.sign(omega_p-n_p_m) * (-11/2) * a_p_m ** (-13/2)
+    eq3 = get_a_factors(hosted_body=planet) * np.sign(omega_s-n_s_p) * (-11/2) * a_s_p ** (-13/2)
+    eq4 = -get_omega_factors(body=moon) * np.sign(omega_m-n_m_sm) * submoon.mass**2 * (-6) * a_m_sm ** (-7)
+    eq5 = -get_omega_factors(body=moon) * np.sign(omega_m-n_p_m) * planet.mass**2 * (-6) * a_p_m ** (-7)
+    eq6 = -get_omega_factors(body=planet) * np.sign(omega_p-n_p_m) * moon.mass**2 * (-6) * a_p_m ** (-7)
+    eq7 = -get_omega_factors(body=planet) * np.sign(omega_p-n_s_p) * star.mass**2 * (-6) * a_s_p ** (-7)
+    eq8 = -get_omega_factors(body=star) * np.sign(omega_s-n_s_p) * planet.mass**2 * (-6) * a_s_p ** (-7)
+
+    jac[0, 0] = eq1; jac[1, 1] = eq2; jac[2, 2] = eq3; jac[3, 0] = eq4; jac[3, 1] = eq5; jac[4, 1] = eq6
+    jac[4, 2] = eq7; jac[5, 2] = eq6
+    return jac
+
+
+def calculate_angular_momentum(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_state_vector_evolution):
+
+    total_angular_momentum_evolution = []
+    for column in y_state_vector_evolution:
+
+        star, planet, moon, submoon = planetary_system
+        a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = column
+
+        n_m_sm = keplers_law_n_from_a_simple(a_m_sm, mu_m_sm)
+        n_p_m = keplers_law_n_from_a_simple(a_p_m, mu_p_m)
+        n_s_p = keplers_law_n_from_a_simple(a_s_p, mu_s_p)
+
+        L_spin = omega_m * moon.I + omega_p * planet.I + omega_s * star.I  # Σ_i I_i \dot{θ}
+        L_orbit = submoon.mass * n_m_sm * a_m_sm**2 + moon.mass * n_p_m * a_p_m**2 + planet.mass * n_s_p * a_s_p**2
+        # Σ_i m_i \dot{φ} a^2
+        total_angular_momentum_evolution.append(L_spin + L_orbit)
+    return np.array(total_angular_momentum_evolution)
+
+
+def sanity_check_tot_ang_momentum_evolution(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_state_vector_evolution):
+    """
+    If the values of the array that is returned by `calculate_angular_momentum` differ significantly from eachother,
+    this might be an artifact bad handling of stiffness in case an explicit solver has been used. 
+    The explicit solver does not resolve small scale oscillatory structure (compare `RK45` vs. `Radau` method), but 
+    the solution is taken to be satisfactory as long as angular momentum is conserved throughout the evolution, since 
+    we are only interested in whether or not the system will remain stable, not the exact values of the semi-major-axes.     
+    :return: 
+    """
+    tot_ang_mom = calculate_angular_momentum(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_state_vector_evolution)
+    tot_ang_mom0 = tot_ang_mom[0]
+    residuals = np.abs(tot_ang_mom - tot_ang_mom0)
+    threshhold = 0.01 * tot_ang_mom0
+    if np.any(residuals > threshhold):
+        raise ValueError("It seems like total angular momentum was not conserved within 1% of the starting angular "
+                         "momentum during this run. I suggest to rerun"
+                         "using an implicit solver method.")
+    else:
+        print("\t\tAngular momentum conserved within 1% of starting angular momentum.")
 
 
 def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y_init: list, planetary_system: list,
-                       list_of_std_mus: list, use_initial_values=False, upper_lim_planet=30) -> list:
+                       list_of_std_mus: list, use_initial_values=False, upper_lim_planet=30,
+                       lower_lim_planet=None, debug_plot=False) -> list:
 
     # noinspection StructuralWrap
     """
@@ -1138,16 +1396,21 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
     :param use_initial_values: bool,    See documentation of `bind_system_gravitationally`
     :param upper_lim_planet:   float,   The upper limit of the planet's semi-major-axis to vary to in astronomical
                                         units.
+    :param lower_lim_planet:   float,   The lower limit of the planet's s.m.axis.
+    implicitly in AU.
+                                        If not specified, will use the star's Roche Limit.
+    :param debug_plot:         bool,    If true, plots the celestial bodies' trajectories for each point of the grid.
 
     :return:                   tuple,   Containing information objects for all iterations:
-                                        results, lifetimes, termination_reason_counter
+                                        results, lifetimes, termination_reason_counter, physically_varied_ranges
 
     """
     results = []  # contains strings "-1", "+1" and "NUM ER" for each iteration,
     # indicating success status of integration
     lifetimes = []  # contains elements like this:
-    # ((iteration identifier),lifetime in years, [initial state vector],
-    # [last state vector], termination reason, whole solution object from solve_ivp)
+    # [(iteration identifier), lifetime in years, [initial state vector], [last state vector], termination reason,
+    # whole solution object from solve_ivp]
+    # `iteration identifier` is a coordinate triple that specifies the edges of the grid search, e.g. (5 5 1).
     termination_reason_counter = {"Submoon fell under roche limit": 0,
                                   "Submoon exceeded a_crit": 0,
                                   "Moon fell under roche limit": 0,
@@ -1156,7 +1419,8 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                   "None": 0,
                                   "Some roche limit was greater than a_crit": 0,
                                   "Some initial value was under the roche or over the a_crit limit": 0,
-                                  "No termination event occurred.": 0}
+                                  "No termination event occurred.": 0,
+                                  "Iteration is likely to be stiff": 0}
 
     solve_ivp_iterator_console_logger(planetary_system, mode=0)
     raise_warning("Please ensure the correct order of the initial state:\n "
@@ -1167,6 +1431,8 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
     # Start iteration of the planet's semi-major-axis from its roche limit to 30 AU (approximately Neptune's distance)
     lower_lim_out = planet.get_current_roche_limit()
+    if lower_lim_planet is not None:
+        lower_lim_out = lower_lim_planet*AU
     upper_lim_out = upper_lim_planet*AU
 
     # Note: During this loop, the semi-major-axes and spin-frequencies of all updates are updated dynamically.
@@ -1175,10 +1441,11 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
     # Exception: After each simulation, i.e., the end of 'solve_ivp', all values are reset to the values assigned by
     # 'create_submoon_system'.
     outer_counter = 0
-    for i in np.linspace(lower_lim_out, upper_lim_out, n_pix_planet):
+    physical_outer_range = np.linspace(lower_lim_out, upper_lim_out, n_pix_planet)
+    for i in physical_outer_range:
         outer_counter += 1
 
-        # Inject the variable to actually vary (moon's semi-major-axis)
+        # Inject the variable to actually vary (planet's semi-major-axis)
         # The values of y_init stay constant throughout all simulations, except the quantity that is varied.
         y_init[2] = i
 
@@ -1190,7 +1457,8 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
         upper_lim_middle = moon.get_current_critical_sm_axis()
 
         middle_counter = 0
-        for j in np.linspace(lower_lim_middle, upper_lim_middle, n_pix_moon):
+        physical_middle_range = np.linspace(lower_lim_middle, upper_lim_middle, n_pix_moon)
+        for j in physical_middle_range:
             middle_counter += 1
 
             # Inject the variable to actually vary (moon's semi-major-axis)
@@ -1205,7 +1473,8 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
             upper_lim_in = submoon.get_current_critical_sm_axis()
 
             inner_counter = 0
-            for k in np.linspace(lower_lim_in, upper_lim_in, n_pix_submoon):
+            physical_inner_range = np.linspace(lower_lim_in, upper_lim_in, n_pix_submoon)
+            for k in physical_inner_range:
                 inner_counter += 1
 
                 # Inject the second variable to vary (submoon's semi-major-axis)
@@ -1229,11 +1498,13 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                     continue  # Continue to the next j iteration
                 except RocheLimitGreaterThanCriticalSemiMajor as er:
                     lifetimes.append([(outer_counter, middle_counter, inner_counter), 0])  # coordinates, 0 years stable
+                    lifetimes.extend([[(outer_counter, middle_counter, k), 0] for k in range(inner_counter+1, n_pix_submoon + 1)])
                     premature_termination_logger(er)
                     termination_reason_counter["Some roche limit was greater than a_crit"] += 1
                     break  # Break all of the k iterations and continue to the next j iteration, which
                     # completely determines the value of the roche limit and critical semi-major-axis.
-                    # In that case, the j-loop (moon-loop) cannot ever host a stable submoon (k-loop)
+                    # In that case, the j-loop (moon-loop) cannot ever host a stable submoon (k-loop) and in that case
+                    # we should also fill in the rest of the k-loop as unstable after breaking it.
 
                 # Finalize the system
                 planetary_system = bind_system_gravitationally(planetary_system=planetary_system,
@@ -1241,29 +1512,37 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
                 # define events to track and values to update and a list describing the events
                 list_of_all_events = [update_values, track_submoon_sm_axis_1, track_submoon_sm_axis_2,
-                                      track_moon_sm_axis_1, track_moon_sm_axis_2]
+                                      track_moon_sm_axis_1, track_moon_sm_axis_2, check_if_stiff]
                 keys = ["Values were updated.", "Submoon fell under roche limit", "Submoon exceeded a_crit",
-                        "Moon fell under roche limit", "Moon exceeded a_crit"]
+                        "Moon fell under roche limit", "Moon exceeded a_crit", "Iteration is likely to be stiff"]
 
                 # evolve to 4.5 Bn. years
-                final_time = turn_billion_years_into_seconds(4.5)
+                # final_time = turn_billion_years_into_seconds(4.5)
+                final_time = turn_billion_years_into_seconds(1e-5)
 
                 # Unpack standard gravitational parameters
                 mu_m_sm, mu_p_m, mu_s_p = list_of_std_mus
 
                 # Solve the problem
                 # noinspection PyTupleAssignmentBalance
+                tracker.clear()
                 sol_object = solve_ivp(
                     fun=submoon_system_derivative,
                     t_span=(0, final_time),
-                    y0=y_init, method="RK23",
+                    y0=y_init, method="Radau",
                     args=(planetary_system, mu_m_sm, mu_p_m, mu_s_p),
                     events=list_of_all_events,
+                    # jac=jacobian
                 )
 
                 # Unpack solution
                 time_points, sol, t_events, _, _, _, _, status, message, success = unpack_solve_ivp_object(sol_object)
                 y_final = sol[:, -1]
+                steps = len(time_points)
+
+                sanity_check_tot_ang_momentum_evolution(mu_m_sm=mu_m_sm,  mu_p_m=mu_p_m, mu_s_p=mu_s_p,
+                                                        planetary_system=planetary_system,
+                                                        y_state_vector_evolution=sol.T)
 
                 # If termination event occurred, find termination reason
                 termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
@@ -1274,11 +1553,17 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                 y_final=y_final, termination_reason_counter=termination_reason_counter,
                                 lifetimes=lifetimes, whole_solution_object=sol_object)
 
-                plot = False
-                if plot:
+                if debug_plot:
+                    print(f"\nDebug plotting since either debug_plot was set to true or num of steps (steps) "
+                          f"larger than 1000...\n")
                     plt_results(sol_object=sol_object, print_sol_object=False, planetary_system=planetary_system,
-                                list_of_mus=list_of_std_mus)
+                                list_of_mus=list_of_std_mus, show=True, save=False)
 
+    consistency_check_volume(expected_volume=n_pix_planet * n_pix_moon * n_pix_submoon, actual_volume=len(lifetimes))
+
+    # The values of the physical axes that have been grid searched
+    physically_varied_ranges = [physical_outer_range, physical_middle_range, physical_inner_range]
     pickle_me_this(f'data_storage/Integration. Num of Pixels (pl, moon, sm) = {n_pix_planet, n_pix_moon, n_pix_submoon}; '
-                   f'omega_init (moon, pl, star) = {y_init[-3:]}', (results, termination_reason_counter, lifetimes))
-    return results, termination_reason_counter, lifetimes
+                   f'omega_init (moon, pl, star) = {y_init[-3:]}',
+                   (results, termination_reason_counter, lifetimes, physically_varied_ranges))
+    return results, termination_reason_counter, lifetimes, physically_varied_ranges
