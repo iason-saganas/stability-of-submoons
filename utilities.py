@@ -9,11 +9,16 @@ import pickle
 from style_components.voxel_plotter import plot_3d_voxels
 from matplotlib.ticker import FuncFormatter
 import datetime
+import time
 
 AU = 1.496e11
 LU = 384.4e6  # 'Lunar unit', the approximate distance between earth and earth's moon
 SLU = LU/20  # 'Sublunar unit', a twentieth of a lunar unit
 
+# TEST
+# t_final = 3597776267807147
+# extended_time_points = np.linspace(0, t_final * 1.5, 1000)
+# analytical_values_extended = calc(extended_time_points)
 
 __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from_n', 'keplers_law_n_from_a_simple',
            'get_standard_grav_parameter', 'get_hill_radius_relevant_to_body', 'get_critical_semi_major_axis',
@@ -21,11 +26,12 @@ __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from
            'CelestialBody', 'turn_seconds_to_years', 'get_a_derivative_factors_experimental', 'get_a_factors',
            'get_omega_derivative_factors_experimental', 'get_omega_factors', 'unpack_solve_ivp_object',
            'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'state_vector_plot',
-           'submoon_system_derivative', 'update_values', 'track_submoon_sm_axis_1', 'track_submoon_sm_axis_2',
-           'track_moon_sm_axis_1', 'track_moon_sm_axis_2', 'reset_to_default', 'solve_ivp_iterator', 'showcase_results',
+           'submoon_system_derivative', 'update_values', 'track_sm_m_axis_1', 'track_sm_m_axis_2',
+           'track_m_p_axis_1', 'track_m_p_axis_2', 'reset_to_default', 'solve_ivp_iterator', 'showcase_results',
            'pickle_me_this', 'unpickle_me_this']
 
 
+# noinspection StructuralWrap
 class Tracker:
     """
     A simple class in whose attributes the state vector can be stored in each iteration by calling inside of
@@ -33,15 +39,32 @@ class Tracker:
     This serves as the datastructure for the stiffness detection scheme.
     `tracker = Tracker()` and `tracker.y` will get an array whose elements are arrays representing the state vector
     at that time point with the entries `a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y` or their derivatives.
+
+    Attributes:
+
+   self.t (np.array):           An array whose elements are floats, representing the time points.
+   self.y (np.array):           An array whose elements represent the state vector at the time point associated with the index
+                                of the element.
+   self.dy_dt (np.array):       As `self.y` but containing the derivative of the state vector at any given time.
+   self.eta_chain (np.array)    An array of floats that represent the evolution of the `stiffness_coefficent` over time.
+   self.signs_body (np.array)   Array of floats that represent the sign of sgn(Ω_i - n_j) that is a factor in the semi-
+                                major-axis derivative of the body.
+
+   NOTE : The array tracker.t must NOT be exactly equal to the final returned time points by the solver.
+
     """
 
     def __init__(self):
+        self.t = None
         self.y = None
         self.dy_dt = None
-        self.t = None
         self.eta_chain = []
+        self.signs_sm = []  # Ω_m - n_sm_m
+        self.signs_m = []  # Ω_p - n_p_m
+        self.signs_p = []  # Ω_s - n_s_p
 
     def add(self, new_y_point, new_dy_dt_ypoint, new_t_point):
+        # Standard add function for time, state and derivative of state
         y = np.array([new_y_point])
         dydt = np.array([new_dy_dt_ypoint])
         t = np.array([new_t_point])
@@ -55,13 +78,45 @@ class Tracker:
             self.t = np.append(self.t, t)
 
     def add_eta(self, eta):
+        # add function for the stiffness coefficients
         self.eta_chain.append(eta)
 
+    def add_signs(self, triple):
+        """
+        The signs to attach to the chains of `self.signs_sm` etc. for each time point.
+        This method should be called each time the derivative is calculated to calculate the next step (i.e. inside
+        of an event function), not if the purpose was to approximate the jacobian (inside the derivative itself), other-
+        wise the arrays will be longer than the number of time points in the solution.
+
+        triple[0] has to be np.sign(Ω_m - n_sm_m)
+        triple[1] has to be np.sign(Ω_p - n_p_m)
+        triple[2] has to be np.sign(Ω_s - n_s_p)
+
+        :param triple: A tuple containing the sign changes.
+        :return:
+        """
+        self.signs_sm.append(triple[0])
+        self.signs_m.append(triple[1])
+        self.signs_p.append(triple[2])
+
     def clear(self):
+        # Clear function
         self.y = None
         self.dy_dt = None
         self.t = None
         self.eta_chain = []
+        self.signs_sm = []
+        self.signs_m = []
+        self.signs_p = []
+
+    def get_sign_changes(self):
+        """
+        Calculates the number of sign changes, from one element to the next, of the data stored in the arrays
+        `self.signs_sm, self.signs_m, self.signs_p` and returns those numbers.
+
+        :return: list,  A list that contains the number of sign changes for the submoon, moon and planet.
+        """
+        return [calculate_sign_changes(arr) for arr in [self.signs_sm, self.signs_m, self.signs_p]]
 
 
 # Initialize global tracker object
@@ -695,7 +750,8 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
     return planetary_system
 
 
-def state_vector_plot(time_points, solution, derivative, planetary_system, list_of_mus, show=True, save=False):
+def state_vector_plot(time_points, solution, derivative, planetary_system, list_of_mus, show=True, save=False,
+                      plot_derivatives=True):
     """
     :param planetary_system: The list of CelestialBodies.
     :param time_points: The time points at which solutions were found
@@ -714,7 +770,7 @@ def state_vector_plot(time_points, solution, derivative, planetary_system, list_
     dy_dt = np.array(derivative(time_points, solution, planetary_system, *list_of_mus))
     evolutions = solution[:6]
     derivatives = dy_dt[:6]
-    ordering =  np.array([0, 2, 4, 1, 3, 5])
+    ordering = np.array([0, 2, 4, 1, 3, 5])
     reordered_axes = axes.flatten()[ordering]
 
     y_labels = [r"$a_{\mathrm{sm}}(t)$", r"$a_{\mathrm{m}}(t)$", r"$a_{\mathrm{p}}(t)$",
@@ -730,9 +786,14 @@ def state_vector_plot(time_points, solution, derivative, planetary_system, list_
     colors = [red, green, blue, green, blue, yellow]
     show_legend_labels = [True, True, True, False, False, True]
 
+    # extended_time = np.concatenate((np.linspace(max(time_points)*0.8, max(time_points)*1.2, 100),time_points))
+    extended_time = time_points
+    extended_time_normed = extended_time/time_norm
+    evol_anas = semi_major_axes_analytical_solution(extended_time, solution.T[0], planetary_system, list_of_mus)
+    evol_anas.extend([None] * 3)  # No analytic solution for spin frequencies calculated
     handles, labels = [], []
 
-    for ax, evolution, color, y_label, norms, legend_label, show_legend_label, derivative in zip(
+    for ax, evolution, color, y_label, norms, legend_label, show_legend_label, derivative, evol_ana in zip(
             reordered_axes,
             evolutions,
             colors,
@@ -740,16 +801,26 @@ def state_vector_plot(time_points, solution, derivative, planetary_system, list_
             y_normalizations,
             legend_labels,
             show_legend_labels,
-            derivatives):
+            derivatives,
+            evol_anas):
 
         y_norm = norms[0]
         dy_dt_norm = norms[1]
-        ax2 = ax.twinx()
         evol = evolution / y_norm
         der = derivative / dy_dt_norm
-        plot_objects = ax.plot(time_normed, evol, color=color, lw=2, ls="-", label=legend_label,
-                               markersize=0)
-        # ax2.plot(time_normed, der, color=color, lw=2, ls="--", markersize=0)
+
+        ax.plot(time_normed, evol, "x", color=color, lw=0, label=legend_label, markersize=5)  # Plot solution with x
+        plot_objects = ax.plot(time_normed, evol, color=color, lw=2, ls="-", label=legend_label, markersize=0) # with -
+
+        # Plot analytic
+        if evol_ana is not None:
+            evol_ana = evol_ana / y_norm
+            ax.plot(extended_time_normed, evol_ana, "D", color="orange", markersize=2, )
+
+        # Plot derivatives
+        if plot_derivatives:
+            ax2 = ax.twinx()
+            ax2.plot(time_normed, der, color=color, lw=2, ls="--", markersize=0)
         ax.set_ylabel(y_label)
         ax.yaxis.set_major_formatter(FuncFormatter(format_func))
         # ax2.yaxis.set_major_formatter(FuncFormatter(format_func))
@@ -831,6 +902,43 @@ def submoon_system_derivative(t, y, planetary_system: List['CelestialBody'], mu_
     return dy_dt
 
 
+def semi_major_axes_analytical_solution(t: float, y0: np.array , planetary_system: List['CelestialBody'], list_of_mus):
+    """
+    Calculates an analytic solution of the semi-major-axes evolutions of submoon, moon and planet, assuming
+    that no sign changes have occurred in their derivatives.
+    Used to check simulations in selected cases where this is true.
+    The calculations have been done by hand in a notepad.
+
+    :param list_of_mus: list,   List of standard gravitational parameters that can be unpacked as below.
+    :param t: float,            The time to calculate the solution for
+    :param y0 np.array:         The initial state vector.
+    :param planetary_system:    The planetary system under investigation
+    :return: res: list:         A list containing the values of a_sm, a_m, a_p at the time t, in that order.
+    """
+    star, planet, moon, submoon = planetary_system
+    mu_m_sm, mu_p_m, mu_s_p = list_of_mus
+    a_m_sm_0, a_p_m_0, a_s_p_0, omega_m_0, omega_p_0, omega_s_0 = y0
+
+    n_m_sm_0 = keplers_law_n_from_a_simple(a_m_sm_0, mu_m_sm)
+    n_p_m_0 = keplers_law_n_from_a_simple(a_p_m_0, mu_p_m)
+    n_s_p_0 = keplers_law_n_from_a_simple(a_s_p_0, mu_s_p)
+
+    # Define constants
+    c_1_prime = 3 * moon.R**5 * np.sign(omega_m_0-n_m_sm_0)*np.sqrt(mu_m_sm) * moon.k * submoon.mass / (moon.Q * moon.mass)
+    c_2_prime = 3 * planet.R**5 * np.sign(omega_p_0-n_p_m_0)*np.sqrt(mu_p_m) * planet.k * moon.mass / (planet.Q * planet.mass)
+    c_3_prime = 3 * star.R**5 * np.sign(omega_s_0-n_s_p_0)*np.sqrt(mu_s_p) * star.k * planet.mass / (star.Q * star.mass)
+
+    c_1 = 13/2 * c_1_prime
+    c_2 = 13/2 * c_2_prime
+    c_3 = 13/2 * c_3_prime
+
+    a_m_sm_evolved = (c_1 * t + a_m_sm_0**(13/2))**(2/13)
+    a_p_m_evolved = (c_2 * t + a_p_m_0**(13/2))**(2/13)
+    a_s_p_evolved = (c_3 * t + a_s_p_0**(13/2))**(2/13)
+
+    return [a_m_sm_evolved, a_p_m_evolved, a_s_p_evolved]
+
+
 def reset_to_default(y: list, planetary_system: List['CelestialBody']):
     """
     During each iteration of `solve_ivp` the semi-major-axes and spin-frequencies are updated dynamically.
@@ -854,19 +962,6 @@ def reset_to_default(y: list, planetary_system: List['CelestialBody']):
     submoon.update_semi_major_axis_a(a_m_sm)
 
 
-''' Delete if not used 
-def calculate_sign_changes(arr):
-    """
-    Takes an array and calculates how often the sign of the elements flipped from one element to another
-    :param arr: np.array
-    :return:
-    """
-    arr = np.array(arr)
-    sign_changes = np.diff(np.sign(arr)) != 0
-    return np.sum(sign_changes)
-'''
-
-
 def check_if_stiff(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
     """
     If the number of oscillations at any interval length (sign change in the
@@ -878,6 +973,8 @@ def check_if_stiff(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_
     dy_dt = submoon_system_derivative(t, y, planetary_system, mu_m_sm, mu_p_m, mu_s_p)
     # Update tracker
     tracker.add(y, dy_dt, t)
+    # NOTE : The array tracker.t must not be exactly equal to the by the solver finally returned time points,
+    # which in this case does not have an important effect, I assume
     current_step_index = np.where(tracker.t == t)[0][0]
 
     # The columns of the tracker.y matrix, i.e. the elements (=rows) of the tracker.y.T matrix represent the time
@@ -930,6 +1027,30 @@ def stiffness_coefficient(arr, subarray_length=5, tolerance_percent=68):
     return close_to_zero_fraction
 
 
+def calculate_sign_changes(arr):
+    """
+    Counts the number of times the sign changes in the given array.
+
+    Parameters:
+    - arr: A 1D numpy array of numerical values.
+
+    Returns:
+    - An integer representing the number of sign changes in the array.
+
+    Examples:
+     >> calculate_sign_changes([])
+    0
+    >> calculate_sign_changes([1, 2, 3, -1, -1])
+    1
+     >> calculate_sign_changes([-1, 2, -3, 1, -1])
+    4
+    """
+    if len(arr) == 0:
+        return None
+    sign_changes = np.diff(np.sign(arr))
+    return np.sum(sign_changes != 0)
+
+
 def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
     """
     Note
@@ -942,6 +1063,11 @@ def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m
     # track and update all relevant values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
 
+    # Calculate orbit frequencies
+    n_m_sm = keplers_law_n_from_a_simple(a_m_sm, mu_m_sm)
+    n_p_m = keplers_law_n_from_a_simple(a_p_m, mu_p_m)
+    n_s_p = keplers_law_n_from_a_simple(a_s_p, mu_s_p)
+
     # Unpack the celestial bodies of the system to access their pre-defined properties
     star, planet, moon, submoon = planetary_system
 
@@ -953,11 +1079,15 @@ def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m
     moon.update_semi_major_axis_a(a_p_m)
     submoon.update_semi_major_axis_a(a_m_sm)
 
+    # Before returning, document if any sign changes occurred in the derivatives
+    tracker.add_signs((np.sign(omega_m - n_m_sm), np.sign(omega_p - n_p_m), np.sign(omega_s - n_s_p)))
+
     # Use an infinity value, so to not actually activate the event
     return omega_s - np.inf
 
 
-def track_submoon_sm_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+def track_sm_m_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Track: Will the submoon fall under the moon's roche limit?
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
     # List unpack the celestial bodies of the system to access their pre-defined properties
@@ -968,7 +1098,9 @@ def track_submoon_sm_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_
     #    print("val of a_sm: ", a_m_sm, " roche limit: ", rl)
     return a_m_sm - rl
 
-def track_submoon_sm_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+
+def track_sm_m_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Track: Will the submoon escape the moon's influence?
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
     # List unpack the celestial bodies of the system to access their pre-defined properties
@@ -980,18 +1112,20 @@ def track_submoon_sm_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_
     return a_m_sm - crit_a
 
 
-def track_moon_sm_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+def track_m_p_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Track: Will the moon fall under the planet's roche limit?
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
     # List unpack the celestial bodies of the system to access their pre-defined properties
     star, planet, moon, submoon = planetary_system
     rl = moon.get_current_roche_limit()
     # if a_p_m - rl < 0:
-    #     print("\t\tThe moons's semi-major-axis fell under the planets's roche limit.")
+    #     print("\t\tThe moon's semi-major-axis fell under the planet's roche limit.")
     return a_p_m - rl
 
 
-def track_moon_sm_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+def track_m_p_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Track: Will the moon escape the planet's influence?
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
     # List unpack the celestial bodies of the system to access their pre-defined properties
@@ -1003,10 +1137,10 @@ def track_moon_sm_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm,
 
 
 update_values.terminal = False
-track_submoon_sm_axis_1.terminal = True
-track_submoon_sm_axis_2.terminal = True
-track_moon_sm_axis_1.terminal = True
-track_moon_sm_axis_2.terminal = True
+track_sm_m_axis_1.terminal = True
+track_sm_m_axis_2.terminal = True
+track_m_p_axis_1.terminal = True
+track_m_p_axis_2.terminal = True
 check_if_stiff.terminal = True
 check_if_stiff.direction = 1
 
@@ -1165,7 +1299,6 @@ def log_results(status, termination_reason, time_points):
     print(f"\t\tNum of time steps taken: {len(time_points)}, age reached: "
           f"{turn_seconds_to_years(time_points[-1])} years.")
 
-    print("\n------------------------------------------\n")
     return stability_status
 
 
@@ -1173,11 +1306,11 @@ def plt_results(sol_object, planetary_system, list_of_mus, print_sol_object=Fals
     # Unpack variables outputted by solution object.
     (time_points, solution, t_events, y_events, num_of_eval, num_of_eval_jac, num_of_lu_decompositions, status,
      message, success) = unpack_solve_ivp_object(sol_object)
-
     if print_sol_object:
         print("sol_object : ", sol_object)
+
     state_vector_plot(time_points, solution, submoon_system_derivative, planetary_system, list_of_mus, show=show,
-                      save=save)
+                      save=save, plot_derivatives=False)
 
 
 def find_termination_reason(status, t_events, keys):
@@ -1192,10 +1325,11 @@ def find_termination_reason(status, t_events, keys):
 
 def document_result(status, termination_reason, time_points, results, i, j, k,
                     y_init, y_final, termination_reason_counter, lifetimes, whole_solution_object):
-    stability_status = log_results(status, termination_reason, time_points)
-    results.append(stability_status)
+
+    stability_status = log_results(status, termination_reason, time_points)  # Prints in terminal
+    results.append(stability_status)  # Appends to object that is returned at the end of grid search
     lifetimes.append([(i, j, k,), turn_seconds_to_years(np.max(time_points)), y_init, y_final,
-                      termination_reason, whole_solution_object])
+                      termination_reason, whole_solution_object, tracker.get_sign_changes()])
     termination_reason_counter[str(termination_reason)] += 1
 
 
@@ -1221,53 +1355,131 @@ def consistency_check_volume(expected_volume, actual_volume):
                       f"than necessary.")
 
 
-def showcase_results(result):
+def print_final_data_object_information(hits, computation_time, termination_reason_counter, lifetimes, norm):
+    """
+
+    :param hits:                        An array that indicates success (+1) or failure (-1) of iteration.
+    :param computation_time:            Computation time in seconds.
+    :param termination_reason_counter:  A dict containing the termination reasons.
+    :param lifetimes:                   The `lifetimes` object returned by the DFE iterative solver.
+    :param norm:                        The number of years that are interpreted as stable.
+    :return:
+    """
     from collections import defaultdict
 
-    hits, termination_reason_counter, lifetimes, physically_varied_ranges = result
-
+    # Turn  `hits` array into `hits` dict to print more easily
     hit_counts = defaultdict(int)
     for hit in hits:
         hit_counts[hit] += 1
 
+    lts = np.array([lifetime[1] for lifetime in lifetimes]) / norm
+    stiffs = termination_reason_counter["Iteration is likely to be stiff"]
+    quo = np.round(100*np.count_nonzero(lts == 1)/(len(lts)-stiffs),2)
 
-    print("\n\n--------RESULTS--------\n\n")
+    print("\n\n--------RESULTS--------\n")
+
+    print("\nTotal number of iterations: ", len(hits), ".")
+    print(f"Of those that were non-stiff ({len(lts)-stiffs}), ", quo, "% reached the stable lifetime of ", norm, " years. \n")
     print("\n------ Stability states (-1: Termination, NUM ER: Numerical error, +1: Longevity):")
     for key, value in hit_counts.items():
         print(f'{key}: {value}')
-    print("\n------")
+    print("------")
+
+    print("\n------ Total computation time in minutes: \n", computation_time / 60)
+    print("------")
 
     print("\n------ Histogram of termination reasons:")
     for key, value in termination_reason_counter.items():
         print(f'{key}: {value}')
-    print("\n------")
+    print("------")
 
-    print("\n------ Longest lifetime object (Second element is lifetime in years):")
+    print("\n------ First five elements of iteratoin with longest lifetime (Second element is lifetime in years):")
     max_subarray = max(lifetimes, key=lambda x: x[1])
     index_of_longest_lifetime_array = lifetimes.index(max_subarray)
-    print(lifetimes[index_of_longest_lifetime_array])
+    print(lifetimes[index_of_longest_lifetime_array][:5])
 
+
+def showcase_results(data, plot=False, suppress_text=True):
+    """
+
+    :param result, array:      The unpickled data returned by the function differential equation solver.
+    :param plot, bool:         Whether or not to plot a 3D result cube.
+    :param suppress_text, bool Whether or not to print basic information about the grid search.
+
+    For convenience, the structure of one element in the `lifetimes` object:
+
+            [0]: (i, j, k,)
+            [1]: turn_seconds_to_years(np.max(time_points))
+            [2]: y_init
+            [3]: y_final
+            [4]: termination_reason
+            [5]: whole_solution_object
+            [6]: tracker.get_sign_changes()
+
+    :return:
+    """
+    # Unpack data object
+    hits, termination_reason_counter, lifetimes, physically_varied_ranges, computation_time = data
+
+    # Normalization constant to determine transparency value (0-1) of a given 3D datapoint.
+    # 1 if lifetime == normalization, lifetime/normalization else
+    normalization = 4.5e9  # years
+
+    if not suppress_text:
+        # Print basic information about grid search
+        print_final_data_object_information(hits, computation_time, termination_reason_counter, lifetimes,
+                                            norm = normalization)
+
+    # Get the varied arrays (X, Y, Z) of grid search, physical as well as integers representing the iteration count
     varied_planet_range, varied_moon_range, varied_submoon_range = tuple([physically_varied_ranges[i] for i in range(3)])
     n_pix_planet, n_pix_moon, n_pix_submoon = tuple([len(physically_varied_ranges[i]) for i in range(3)])
 
+    # Sanity-check grid search volume
     consistency_check_volume(expected_volume=n_pix_planet * n_pix_moon * n_pix_submoon, actual_volume=len(lifetimes))
 
-    normalization = 4.5e9  # years
-    coordinates = np.array([item[0] for item in lifetimes])  # This is nx3 matrix where each row represents a
+    solved_coordinates = np.array([lifetime[0] for lifetime in lifetimes if
+                                   lifetime[4] != "Iteration is likely to be stiff"])
+    unsolved_coordinates = np.array([lifetime[0] for lifetime in lifetimes if
+                                     lifetime[4] == "Iteration is likely to be stiff"])
+    # `lifetime[0]` is iteration counter (i, j, k,) (proxies for actual physical values).
+    # I.e. `coordinates` is now a nx3 matrix where each row represents a
     # coordinate point: [[ 1  1  1], [ 1  1  2], [ 1  1  3] ... ].
-    X = [coordinate_triple[0] for coordinate_triple in coordinates]  # Planet semi-major-axis proxy
-    Y = [coordinate_triple[1] for coordinate_triple in coordinates]  # Moon -""-
-    Z = [coordinate_triple[2] for coordinate_triple in coordinates]  # Submoon -""-
+    # The difference between `solved_coordinates` and `unsolved_coordinates` is that `solved_coordinates` does NOT
+    # contain those iterations in which the stiffness ratio indicated that the numerics are likely to be stiff and
+    # the iteration was therefore prematurely interrupted.
+    # These iterations are collected in `unsolved_coordinates` which are to be marked with an `x` in the 3D plot.
 
-    X = np.array([varied_planet_range[coordinate_proxy - 1] for coordinate_proxy in X])/AU
+    X_solved = [coordinate_triple[0] for coordinate_triple in solved_coordinates]  # Planet semi-major-axis proxy
+    Y_solved = [coordinate_triple[1] for coordinate_triple in solved_coordinates]  # Moon -""-
+    Z_solved = [coordinate_triple[2] for coordinate_triple in solved_coordinates]  # Submoon -""-
+    # These operations are equivalent to extracting the first, second and third column of `coordinates` respectively.
+
+    X_unsolved = [coordinate_triple[0] for coordinate_triple in unsolved_coordinates]
+    Y_unsolved = [coordinate_triple[1] for coordinate_triple in unsolved_coordinates]
+    Z_unsolved = [coordinate_triple[2] for coordinate_triple in unsolved_coordinates]
+
+    X_solved = np.array([varied_planet_range[coordinate_proxy - 1] for coordinate_proxy in X_solved])/AU
     # Planet semi-major-axis physical in AU
-    Y = np.array([varied_moon_range[coordinate_proxy - 1] for coordinate_proxy in Y])/LU  # Moon -""-
+    Y_solved = np.array([varied_moon_range[coordinate_proxy - 1] for coordinate_proxy in Y_solved])/LU  # Moon -""-
     # in earth-moon distances
-    Z = np.array([varied_submoon_range[coordinate_proxy - 1] for coordinate_proxy in Z])/SLU  # Submoon -""- in
-    # twentieths of earth-moon distance
-    values = np.array([item[1] for item in lifetimes])/normalization  # a number between 0 and 1, if
-    # 1, equates to a point in phase space that has a stable lifetime of `normalization` years.
+    Z_solved = np.array([varied_submoon_range[coordinate_proxy - 1] for coordinate_proxy in Z_solved])/SLU  # Submoon
+    # -""- in twentieths of earth-moon distance
 
+    X_unsolved = np.array([varied_planet_range[coordinate_proxy - 1] for coordinate_proxy in X_unsolved]) / AU
+    Y_unsolved = np.array([varied_moon_range[coordinate_proxy - 1] for coordinate_proxy in Y_unsolved]) / LU
+    Z_unsolved = np.array([varied_submoon_range[coordinate_proxy - 1] for coordinate_proxy in Z_unsolved]) / SLU
+
+    values_solved = np.array([lifetime[1] for lifetime in lifetimes
+                              if lifetime[4] != "Iteration is likely to be stiff"])/normalization
+
+    values_unsolved = np.array([lifetime[1] for lifetime in lifetimes
+                              if lifetime[4] == "Iteration is likely to be stiff"])/normalization
+    # a number between 0 and 1, if 1, equates to a point in phase space that has a stable lifetime of `normalization`
+    # years.
+
+    # A small snippet to export data to embed onto my personal webpage using chartJS.
+    # Do not necessarily delete
+    """
     export_data_for_example = False
     if export_data_for_example:
         # stability transition region, this is in order to post an example unto `https://iason-saganas.github.io`
@@ -1283,19 +1495,11 @@ def showcase_results(result):
 
             # Copy the string to the clipboard
             pyperclip.copy(array_str)
+    """
 
-    # Concatenate the arrays along the second axis
-    merge = np.hstack((coordinates, np.expand_dims(values, axis=1)))
-
-    # Create an empty Xdim x Ydim x Zdim x1 array
-    full_4D_data = np.zeros((n_pix_submoon, n_pix_moon, n_pix_submoon, 1))
-    # Iterate over each row and assign color channel value
-    for row in merge:
-        x, y, z, color = row
-        full_4D_data[int(x) - 1, int(y) - 1, int(z) - 1, 0] = color
-
-    plot_3d_voxels(data=full_4D_data, multi_view=False, sampling_ratio=1, skew_factor=1, colormap='RdYlBu_r',
-                   bz=[X, Y, Z, values], transparency_threshold=.1)
+    if plot:
+        plot_3d_voxels(data_solved=[X_solved, Y_solved, Z_solved, values_solved],
+                       data_unsolved=[X_unsolved, Y_unsolved, Z_unsolved, values_unsolved])
 
 
 def jacobian(t, y, *args):
@@ -1334,6 +1538,14 @@ def jacobian(t, y, *args):
 
 
 def calculate_angular_momentum(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_state_vector_evolution):
+    """
+    :param planetary_system:
+    :param mu_m_sm:
+    :param mu_p_m:
+    :param mu_s_p:
+    :param y_state_vector_evolution: must be sol.T
+    :return:
+    """
 
     total_angular_momentum_evolution = []
     for column in y_state_vector_evolution:
@@ -1355,11 +1567,14 @@ def calculate_angular_momentum(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_stat
 def sanity_check_tot_ang_momentum_evolution(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_state_vector_evolution):
     """
     If the values of the array that is returned by `calculate_angular_momentum` differ significantly from eachother,
-    this might be an artifact bad handling of stiffness in case an explicit solver has been used. 
-    The explicit solver does not resolve small scale oscillatory structure (compare `RK45` vs. `Radau` method), but 
-    the solution is taken to be satisfactory as long as angular momentum is conserved throughout the evolution, since 
-    we are only interested in whether or not the system will remain stable, not the exact values of the semi-major-axes.     
-    :return: 
+    this might be an artifact bad handling of stiffness in case an explicit solver has been used.
+    The explicit solver does not resolve small scale oscillatory structure (compare `RK45` vs. `Radau` method), but
+    the solution is taken to be satisfactory as long as angular momentum is conserved throughout the evolution, since
+    we are only interested in whether or not the system will remain stable, not the exact values of the semi-major-axes.
+
+    y_state_vector_evolution must be solution.T
+
+    :return:
     """
     tot_ang_mom = calculate_angular_momentum(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_state_vector_evolution)
     tot_ang_mom0 = tot_ang_mom[0]
@@ -1370,7 +1585,285 @@ def sanity_check_tot_ang_momentum_evolution(planetary_system, mu_m_sm, mu_p_m, m
                          "momentum during this run. I suggest to rerun"
                          "using an implicit solver method.")
     else:
-        print("\t\tAngular momentum conserved within 1% of starting angular momentum.")
+        print("\t\tAngular momentum is ... conserved within 1% of starting angular momentum.")
+
+
+def sanity_check_with_analytical_sol_if_possible(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_state_vector_evolution,
+                                                 time_points):
+    """
+
+    The workflow-of this function is as follows:
+
+    Check whether comparison to the analytical solution is applicable (only if no sign changes
+    occurred in the semi-major-axes evolutions during the numeric integration).
+    If not, return, if yes continue.
+
+    Are the numeric end-states near to the analytical solution? If not:
+
+    Does the analytic solution show signs of divergence?
+    --------------------------------------------------------
+    Check by looking for nan's in the analytic solution and get the time point of the nan ~ time point of divergence.
+
+       No
+       => Analytic and numerical final state have to be within 1%.
+
+       Yes
+       => Has the numeric solution diverged?
+       ----------------------------------------
+
+       Check by computing relative time differences.
+       If progress was made only 1/1000th fraction in the time direction, this indicates extremely small time-steps,
+       which we is a sign of divergence in case there are no rapid oscillations in the solution (which they are not
+       at this step in the code-workflow, they would have already been caught.)
+
+            No
+            => Raise value error: Significant deviation from analytical solution.
+
+            Yes
+            => Have the solutions diverged in the same direction?
+            (Check sign of gradients)
+            --------------------------------------------------------
+
+                No
+                => raise value error: Significant deviation from analytical solution.
+
+                Yes
+                => Are the time points of the analytic and numerical solution not more than a 1000yrs apart?
+                -----------------------------------------------------------------------------------------------
+
+                    No
+                    => raise value error: Significant deviation from analytical solution.
+
+                    Yes
+                    => ACCEPT
+
+
+    If the solution is accepted it means that either the numerical solution follows the analytical one, or that
+    both have diverged, in the same direction, not more than a 1000yrs apart. This offset in the time direction
+    is then explained as the consequence of accumulated round-off errors in the numeric solution since the solver
+    does not jump soon enough abruptly to the necessary, extremely small time-step, but increases it gradually.
+
+    There is one case, that this workflow does not catch.
+
+    --
+
+
+    :param planetary_system:            The planetary system.
+    :param mu_m_sm:                     The standard gravitational parameter between moon and submoon.
+    :param mu_p_m:                      The standard gravitational parameter between moon and planet.
+    :param mu_s_p:                      The standard gravitational parameter between planet and star.
+    :param y_state_vector_evolution:    The full time evolution of the state vector from `solve_ivp`, transposed.
+    :param time_points:                 The time points at which the numeric solution was calculated
+    :return:
+    """
+
+    # First check if the analytic solution is applicable (only if no sign changes occurred in the semi-major-axes
+    # during the numeric integration)
+
+    final_time = time_points[-1]
+    sign_counters = tracker.get_sign_changes()
+
+    if sign_counters != [0, 0, 0]:
+        print("\t\tAnalytic comparison not applicable, sign changes in (a_sm, a_m, a_p): ", sign_counters)
+        print("\n------------------------------------------\n")
+        return
+
+    # sign_counters == [0, 0, 0], therefore Comparison applicable
+
+    list_of_mus = [mu_m_sm, mu_p_m, mu_s_p]
+    initial_state = y_state_vector_evolution[0]
+    end_state = y_state_vector_evolution[-1]  # rows: state at different times, columns: variables
+
+    # Has any of the analytic solutions a_sm, a_m or a_p diverged?
+    extended_time = np.linspace(np.max(time_points) / 2, np.max(time_points) * 2, 500)
+    ana_evols = np.array(semi_major_axes_analytical_solution(time_points, initial_state,
+                                                             planetary_system, list_of_mus))
+    ana_evols_ext = np.array(semi_major_axes_analytical_solution(extended_time, initial_state,
+                                                                 planetary_system, list_of_mus))
+    A = ana_evols_ext.T  # Shorter Alias, the transpose is for the `first_nan_indices` line
+    first_nan_indices = [np.where(np.isnan(A[:, col]))[0][0] if np.any(np.isnan(A[:, col])) else None for col in range(A.shape[1])]
+    ana_is_divergent = [True if idx is not None else False for idx in first_nan_indices]
+
+    a_m_sm_NUM_f, a_p_m_NUM_f, a_s_p_NUM_f, _, _, _ = end_state  # at numerical time points
+    a_m_sm_ANA_f, a_p_m_ANA_f, a_s_p_ANA_f = [a[-1] for a in ana_evols]  # also at numerical time points!
+
+    numeric_end_state = [a_m_sm_NUM_f, a_p_m_NUM_f, a_s_p_NUM_f]
+    analytic_end_state = [a_m_sm_ANA_f, a_p_m_ANA_f, a_s_p_ANA_f]
+
+    names = ['submoon', 'moon', 'planet']
+
+    # Before pushing down further in the pipeline, do a preliminary check of whether the final states are near to
+    # each other, in which case further analysis is not needed.
+
+    is_near = [False, False, False]
+    for idx, body in enumerate(names):
+        # Possibly good solutions
+        is_near[idx] = handle_non_diverged_solution(numeric_end_state[idx], analytic_end_state[idx], sign_counters,
+                                                    body, preliminary=True)
+
+    for idx, analytical_sub_solution_is_diverged in enumerate(ana_is_divergent):
+        # Possibly bad solutions
+        if is_near[idx]:
+            # If the solution has previously tested to be good, no need to do all this for loop.
+            continue
+        num_sol = y_state_vector_evolution[:, idx]
+        ana_sol = ana_evols[idx]  # on numerical time points domain (although does not matter if on extended domain)
+        body = names[idx]
+
+        if not analytical_sub_solution_is_diverged:
+            # Check for each solution independently!
+            handle_non_diverged_solution(numeric_end_state[idx], analytic_end_state[idx], sign_counters, body)
+
+        elif analytical_sub_solution_is_diverged:
+            # Case one: The numeric solution has not diverged => Throw error
+            # Case two: The numeric solution has diverged => Check time distance to analytic divergence
+            time_of_ana_divergence = extended_time[first_nan_indices[idx]]
+            numeric_solution_has_diverged = detect_divergence(t_arr=time_points, y_arr=num_sol)
+            if numeric_solution_has_diverged:
+                n = len(time_points)
+                handle_diverged_solution(num_sol, ana_sol, time_of_ana_divergence, final_time, body, num_of_steps=n)
+            else:
+                print(f"CASE 2 ERROR: The analytic solution of the {body} s.m.axis has blown up, but the \n"
+                      f"numeric solution has not. This can mean: 2.1 The numeric divergence detection algorithm is \n"
+                      f"not good enough. 2.2 The numerical solution is wrong.")
+                raise ValueError("Case 2. The numeric solution is too far off from the analytic solution.")
+        else:
+            raise ValueError("Unknown case.")
+    print("\n------------------------------------------\n")  # End
+
+
+def calculate_relative_neighboring_diffs(arr):
+    # Outputs an array of length len(arr)-1, whose i-th element is (arr[i+1]-arr[i])/arr[i+1].
+    # E.g.: [1 1 2] will output [0 1] and [1 1 2] will output [0 -0.5]
+    return np.diff(arr)/arr[:-1]
+
+
+# Global testing variables. Here i am trying to see whether the delta_t's in `handle_diverged_solution` grow with
+# total time or not.
+# If they do, this is a hint of some kind of systematic, which I should further think about.
+t_arr_final = []  # the numeric final times of different iterations
+delta_t_arr_div = []  # The time differences between the divergences of numeric and analytic solution for each of those iters.
+num_steps_arr = []
+
+
+def handle_diverged_solution(num_sol, ana_sol, time_of_ana_divergence, final_numeric_time, body, num_of_steps=None):
+    """
+    Checks whether or not the numeric and analytic solution have diverged into the same direction (upwards or downwards)
+    by comparing gradients and if yes, check that the point of divergences are close enough (e.g. <1000yrs) for the
+    discrepancy to be explicable by increased round-off errors of the numerical solution due to increased steps and
+    smaller step sizes.
+
+    :param final_numeric_time:      The final numeric time as an approximate time to the divergence time point of the
+                                    numeric solution.
+    :param body:                    A string that specifies which body's semi-major-axis is under investigation.
+    :param time_of_ana_divergence:  The approximate time at which the analytical solution diverges.
+    :param num_sol:         The numeric solution of a quantity.
+    :param ana_sol:         It's analytical counterpart.
+    :param num_of_steps:    The number of steps performed by the numeric solution, for plotting/debugging purposes.
+    :return:
+    """
+    grad_num_sign = np.sign(np.gradient(num_sol)[-1])
+    grad_ana_sign = np.sign(np.gradient(ana_sol)[-1])
+
+    if grad_num_sign != grad_ana_sign:
+        print(f"CASE 3 ERROR: The analytic solution and the numeric solution blow up into different directions:\n"
+              f"(ana / num) {grad_ana_sign} / {grad_num_sign}")
+        raise ValueError("Case 3. The numeric solution is too far off from the analytic solution.")
+
+    # Time difference between points of divergence in years:
+    delta_t = np.abs(final_numeric_time-time_of_ana_divergence)/(3600*24*365)
+    tr = 1e9 * 0.0005  # 0.05% of a billion years = 500.000 yrs.
+    print("Differences between points of divergences: ", delta_t)
+    if delta_t > tr:
+        # Very bad case
+        print(f"CASE 4 ERROR: The time points of divergence of the analytic and numeric solution are too far off.\n"
+              f"({delta_t} years vs {tr} years). This might mean that the threshhold was too strict, or that the "
+              f"hypothesis that \n the time delay between the divergences is caused by increased round-off errors due "
+              f"to decreased step-\nsize and increased total steps (in turn due to solver behaviour at divergence) "
+              f"is incorrect.")
+        raise ValueError("Case 4. The numeric solution is too far off from the analytic solution.")
+
+    if num_of_steps is not None:
+        # For plotting purposes
+        t_arr_final.append(final_numeric_time)
+        delta_t_arr_div.append(delta_t)
+        num_steps_arr.append(num_of_steps)
+
+    print(f"\t\tAnalytic comparison applicable for final {body} s.m.axis... "
+          f"Analytic solution has diverged, as did the numeric one, in the same direction, {delta_t}yrs (<{tr}) apart."
+          f" The solution is accepted.")
+
+
+def handle_non_diverged_solution(numeric_end_state, analytic_end_state, sign_counters, body, preliminary=False):
+    """
+    Checks whether the passed numeric states agree with the analytic ones within 1%.
+    This check is performed in another function not as a vector operation, but via a for loop, i.e. each element
+    of [a_sm, a_m, a_p] possible checked independently.
+
+    This function can be called with an argument `preliminary`, that does not throw an error if the relative
+    deviation threshold is surpassed.
+    This way, the truth values that are returned (True for is_near analytical and False for not is_near analytical)
+    can be grabbed.
+    The truth values in turn can be used to decide whether the numerical solution should be pushed further down
+    the `sanity_check_with_analytical_sol_if_possible` pipeline.
+
+    :param numeric_end_state:       A list containing the numeric final states of the s.m.-axis of submoon, moon and
+                                    planet.
+    :param analytic_end_state:      The analytic equivalent to `analytic_end_state`.
+    :param sign_counters:           The number of times the sign changed in the derivative of the solutions
+                                    (sanity check by eye, when this error is thrown that array must be (0, 0, 0).
+    :param body:                    A string that specifies which body's semi-major-axis is under investigation.
+    :param preliminary: bool        Whether to throw an error if the relative deviation threshold is surpassed.
+    :return:
+    """
+    relative_deviation = np.array([np.abs(numeric_end_state - analytic_end_state) / analytic_end_state])
+    if relative_deviation > 0.01:
+        # Numeric solution too far off from analytic one
+        if not preliminary:
+            print(f"\nCASE 1 ERROR:  deviation of numeric solution of {body} s.m.axis (non-diverged analytic end-state) "
+                  f"too far away from analytic one.\nRelative deviation: {relative_deviation*100}%. "
+                  f"But the threshold was 1%. \n",
+                  f"The analytic solution comparison was applicable since the sign-"
+                  f"changes in the evolution of (a_sm, a_m, a_p) were: {sign_counters}.")
+            raise ValueError("Case 1. The numeric solution is too far off from the analytic solution.")
+        return False
+    print(f"\t\tAnalytic comparison applicable for final {body} s.m.axis... "
+          f"within 1% of expected final analytic value.")
+    return True
+
+
+def detect_divergence(t_arr, y_arr):
+    """
+    Detects whether y_arr does shows indeed signs of suspected divergence by:
+    Assuming that the points in the t_arr get closer and closer together, and finding a transition point after which the
+    relative change from one x point to the next is miniscule (e.g. 1e-3 threshhold) and only gets smaller.
+
+    This cuts the t_arr into two regions: A possibly broad region that is suspected to have a relatively small gradient
+    and a narrow region with suspected very high region.
+
+    λ is defined as the ratio between the gradient in the first region (represented by the gradient sample directly
+    before the transition region) and the gradient in the second region (represented by the last gradient sample
+    possible, which is taken to be a good characteristic since the second region is suspected to be narrow).
+
+    If λ < 1e-6, return true (diverged), else false (non-diverged)
+
+    :param t_arr:
+    :param y_arr:
+    :return:
+    """
+    relative_progress = calculate_relative_neighboring_diffs(t_arr)  # in the t-direction
+    try:
+        tr_idx = np.where(relative_progress < 1e-3)[0][0]
+    except IndexError:
+        # No transition point was detected.
+        return False
+    grad = np.gradient(y_arr, t_arr)
+    lambda_ratio = grad[tr_idx-5] / grad[-1]
+    print("Calculated lambda ratio: ", lambda_ratio)
+    if lambda_ratio < 1e-2:
+        return True
+    else:
+        return False
 
 
 def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y_init: list, planetary_system: list,
@@ -1382,7 +1875,36 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
     The main function executing the numerical integration of the submoon system.
     The state of the system is encdoded in six variables that are ordered like this throughout the code:
 
-    [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega],
+    [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega].
+
+    Return statement elements:
+
+    -   `results`:
+
+            Contains strings "-1", "+1" and "NUM ER" for each iteration indicating success status of integration-
+
+    -   `lifetimes`, np.array with elements:
+
+            [0]: (i, j, k,)
+            [1]: turn_seconds_to_years(np.max(time_points))
+            [2]: y_init
+            [3]: y_final
+            [4]: termination_reason
+            [5]: whole_solution_object
+            [6]: tracker.get_sign_changes()
+
+            In words:
+            [0] `iteration identifier` (natural numbers) that can be turned into real coordinates using the returned
+            `physically_varied_ranges`, [1] the lifetime in this iteration in years, [2] the initial and [3] final state
+             vector (initial one if iteration ended prematurely), [4] the termination reason and [5] the whole solution
+             object (None if there was none), [6 ]the number of sign changes in the semi-major-axis of submoon,
+             moon and planet.
+
+            Here, `iteration identifier` is a coordinate triple that specifies the edges of the grid search, e.g.
+            (5 5 1).
+
+    -   The rest should be clear
+
 
     :param n_pix_planet:       int,     The outer, planet semi-major-axis iteration step length.
     :param n_pix_moon:         int,     The middle, moon semi-major-axis iteration step length.
@@ -1405,12 +1927,10 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                         results, lifetimes, termination_reason_counter, physically_varied_ranges
 
     """
+    start_time = time.time()
     results = []  # contains strings "-1", "+1" and "NUM ER" for each iteration,
     # indicating success status of integration
-    lifetimes = []  # contains elements like this:
-    # [(iteration identifier), lifetime in years, [initial state vector], [last state vector], termination reason,
-    # whole solution object from solve_ivp]
-    # `iteration identifier` is a coordinate triple that specifies the edges of the grid search, e.g. (5 5 1).
+    lifetimes = []
     termination_reason_counter = {"Submoon fell under roche limit": 0,
                                   "Submoon exceeded a_crit": 0,
                                   "Moon fell under roche limit": 0,
@@ -1492,13 +2012,23 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                     sanity_check_initial_values(a_sm_0=y_init[0], a_m_0=y_init[1], a_p_0=y_init[2],
                                                 planetary_system=planetary_system)
                 except InitialValuesOutsideOfLimits as er:
-                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0])  # coordinates, 0 years stable
+                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, y_init,
+                                      "Some initial value was under the roche or over the a_crit limit",
+                                      None, tracker.get_sign_changes()])  # See docstring for explanation
                     premature_termination_logger(er)
                     termination_reason_counter["Some initial value was under the roche or over the a_crit limit"] += 1
+                    results.append("-1")
                     continue  # Continue to the next j iteration
                 except RocheLimitGreaterThanCriticalSemiMajor as er:
-                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0])  # coordinates, 0 years stable
-                    lifetimes.extend([[(outer_counter, middle_counter, k), 0] for k in range(inner_counter+1, n_pix_submoon + 1)])
+                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, y_init,
+                                      "Some roche limit was greater than a_crit",
+                                      None, tracker.get_sign_changes()])
+                    results.append("-1")
+                    lifetimes.extend([[(outer_counter, middle_counter, sm_pix), 0, y_init, y_init,
+                                       "Some roche limit was greater than a_crit", None, tracker.get_sign_changes()]
+                                      for sm_pix in range(inner_counter + 1, n_pix_submoon + 1)])  # Skip all other
+                    # iterations as well
+                    results.extend(["-1"]*len(list(range(inner_counter + 1, n_pix_submoon + 1))))
                     premature_termination_logger(er)
                     termination_reason_counter["Some roche limit was greater than a_crit"] += 1
                     break  # Break all of the k iterations and continue to the next j iteration, which
@@ -1511,14 +2041,14 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                                                use_initial_values=use_initial_values, verbose=False)
 
                 # define events to track and values to update and a list describing the events
-                list_of_all_events = [update_values, track_submoon_sm_axis_1, track_submoon_sm_axis_2,
-                                      track_moon_sm_axis_1, track_moon_sm_axis_2, check_if_stiff]
+                list_of_all_events = [update_values, track_sm_m_axis_1, track_sm_m_axis_2,
+                                      track_m_p_axis_1, track_m_p_axis_2, check_if_stiff]
                 keys = ["Values were updated.", "Submoon fell under roche limit", "Submoon exceeded a_crit",
                         "Moon fell under roche limit", "Moon exceeded a_crit", "Iteration is likely to be stiff"]
 
                 # evolve to 4.5 Bn. years
-                # final_time = turn_billion_years_into_seconds(4.5)
-                final_time = turn_billion_years_into_seconds(1e-5)
+                final_time = turn_billion_years_into_seconds(4.5)
+                # final_time = turn_billion_years_into_seconds(1e-5)
 
                 # Unpack standard gravitational parameters
                 mu_m_sm, mu_p_m, mu_s_p = list_of_std_mus
@@ -1532,17 +2062,13 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                     y0=y_init, method="Radau",
                     args=(planetary_system, mu_m_sm, mu_p_m, mu_s_p),
                     events=list_of_all_events,
+                    rtol=1e-4
                     # jac=jacobian
                 )
-
                 # Unpack solution
                 time_points, sol, t_events, _, _, _, _, status, message, success = unpack_solve_ivp_object(sol_object)
                 y_final = sol[:, -1]
                 steps = len(time_points)
-
-                sanity_check_tot_ang_momentum_evolution(mu_m_sm=mu_m_sm,  mu_p_m=mu_p_m, mu_s_p=mu_s_p,
-                                                        planetary_system=planetary_system,
-                                                        y_state_vector_evolution=sol.T)
 
                 # If termination event occurred, find termination reason
                 termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
@@ -1553,17 +2079,81 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                 y_final=y_final, termination_reason_counter=termination_reason_counter,
                                 lifetimes=lifetimes, whole_solution_object=sol_object)
 
-                if debug_plot:
+                # Test
+
+                identifier = (outer_counter, middle_counter, inner_counter)
+                control_counter = None
+                plot_delta_t_systematics = True  # Plots the evolution of the time difference between analytic and
+                # numeric divergence
+                if identifier == control_counter:
+                    print("a_sm_0 should be: ", physical_inner_range[inner_counter])
+                    for index, TIME in enumerate(time_points):
+                        NUM = sol[0, :][index]
+                        ANA = semi_major_axes_analytical_solution(TIME, y_init, planetary_system, list_of_std_mus)[0]
+                        print("At time ", TIME, " the numeric solution is ", NUM, " which deviates from ", ANA, " (analytic) by ", 100*np.abs(ANA-NUM)/ANA, " %.")
+
+                    ANA_final_sm = semi_major_axes_analytical_solution(time_points[-1], y_init, planetary_system, list_of_std_mus)[0]
+                    abs_tol = 1e-6
+                    rel_tol = 1e-6
+                    tot_err = abs_tol+rel_tol*sol[0, :][-1]  # abs_tol * rel_tol * a_sm_final
+                    print("\t the ERROR right now is kept smaller than atol + rtol * y which in the last case is equal to: ", tot_err, " but this already ", tot_err*100/ANA_final_sm, " % of the final analytic solution.")
+
+                # Numerical solution sanity-check I HERHHEHE Should come before document results (and ana san check too)
+                sanity_check_tot_ang_momentum_evolution(mu_m_sm=mu_m_sm, mu_p_m=mu_p_m, mu_s_p=mu_s_p,
+                                                        planetary_system=planetary_system,
+                                                        y_state_vector_evolution=sol.T)
+
+                if debug_plot and identifier == control_counter:
                     print(f"\nDebug plotting since either debug_plot was set to true or num of steps (steps) "
-                          f"larger than 1000...\n")
+                          f"larger than 100...\n")
                     plt_results(sol_object=sol_object, print_sol_object=False, planetary_system=planetary_system,
                                 list_of_mus=list_of_std_mus, show=True, save=False)
+
+                if plot_delta_t_systematics and identifier == (10, 10, 10):
+                    # Really, what you should plot here is not the total number of steps, but the mean relative
+                    # step-size after the transition point.
+                    times = turn_seconds_to_years(np.array(t_arr_final), "Millions")
+                    print("Times: ", times)
+                    print("Vals: ", delta_t_arr_div)
+                    # Create the primary plot
+                    fig, ax1 = plt.subplots()
+
+                    # Plot delta_t on the primary y-axis
+                    ax1.plot(times, delta_t_arr_div, "b.")
+                    ax1.set_xlabel("Time in Millions of years")
+                    ax1.set_ylabel(r"$\Delta t$ in years", color='b')
+                    ax1.tick_params(axis='y', labelcolor='b')
+                    ax1.set_title("Evolution of divergence time points difference")
+
+                    # Create a secondary y-axis sharing the same x-axis
+                    ax2 = ax1.twinx()
+
+                    # Plot number of steps on the secondary y-axis
+                    ax2.plot(times, num_steps_arr, "r.")
+                    ax2.set_ylabel("Number of steps", color='r')
+                    ax2.tick_params(axis='y', labelcolor='r')
+
+                    plt.show()
+
+                # Numerical solution sanity-check II
+                sanity_check_with_analytical_sol_if_possible(mu_m_sm=mu_m_sm, mu_p_m=mu_p_m, mu_s_p=mu_s_p,
+                                                             planetary_system=planetary_system,
+                                                             y_state_vector_evolution=sol.T, time_points=time_points)
 
     consistency_check_volume(expected_volume=n_pix_planet * n_pix_moon * n_pix_submoon, actual_volume=len(lifetimes))
 
     # The values of the physical axes that have been grid searched
     physically_varied_ranges = [physical_outer_range, physical_middle_range, physical_inner_range]
+
+    # Get computation time
+    end_time = time.time()
+    computation_time = end_time - start_time
+
+    # Return object
+    data = (results, termination_reason_counter, lifetimes, physically_varied_ranges, computation_time)
+
     pickle_me_this(f'data_storage/Integration. Num of Pixels (pl, moon, sm) = {n_pix_planet, n_pix_moon, n_pix_submoon}; '
                    f'omega_init (moon, pl, star) = {y_init[-3:]}',
-                   (results, termination_reason_counter, lifetimes, physically_varied_ranges))
-    return results, termination_reason_counter, lifetimes, physically_varied_ranges
+                   data)
+
+    return data

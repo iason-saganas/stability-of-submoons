@@ -5,59 +5,22 @@ import numpy as np
 from matplotlib import cm
 from matplotlib.colors import LinearSegmentedColormap
 
-def plot_3d_voxels(data, bz, transparency_threshold=0, skew_factor=1, sampling_ratio=0.3, multi_view=True, colormap='magma',save_img=False ,channel_first=False,
-                   ):
 
-    # https://github.com/XxGothicfanxX/Voxel-Plotter-py
-
-    """
-    This function visualizes 3D data (voxels) with one channel using a 3D scatter plot.
-
-    Parameters:
-    data (numpy.ndarray): A 4D numpy array representing the voxel grid.
-
-    transparency_threshold (float): A threshold below which voxel values are considered transparent.
-
-    skew_factor (float): A factor by which the voxel values are skewed before visualizing.
-                         This puts emphasis on higher values and suppresses lower ones.
-                         skewed_values = voxel_values ** skew_factor
-
-    sampling_ratio (float): The ratio of non-zero voxels to sample and plot. Must be between 0 and 1.
-
-    multi_view (boolean): Plot different views (perspective, top, bottom, front, left, right)
-
-    colormap (string): The colormap of choice
-
-    channel_first (boolean): Is the first dimension of your data the channel?
-
-    save_img (boolean): Saves the plots as PDF and PNG. Change the path and file name to your liking.
-
+def plot_3d_voxels(data_solved, data_unsolved):
     """
 
-    # Check if the input data is a 4D numpy array
-    if not isinstance(data, np.ndarray) or data.ndim != 4:
-        raise ValueError("Input data must be a 4D numpy array")
+    Each data object has the following structure: [X, Y, Z, color_values], where
+    X, Y, Z and values are all 1D np.array where the elements at each index correspond to a one datapoint,
+    i.e. location and transparency value (alpha channel).
 
-    # Check if the transparency_threshold and skew_factor are valid numbers
-    if not isinstance(transparency_threshold, (int, float)):
-        raise ValueError("Transparency threshold must be a number")
-    if not isinstance(skew_factor, (int, float)):
-        raise ValueError("Skew factor must be a number")
+    :param data_solved:         Data array of those iterations that were completed successfully without
+                                premature interruption due to stiffness detection.
+    :param data_unsolved:       !data_solved
+    :return:
+    """
 
-    # Check if the sampling_ratio is a valid number between 0 and 1
-    if not isinstance(sampling_ratio, (int, float)) or sampling_ratio < 0 or sampling_ratio > 1:
-        raise ValueError("Sampling ratio must be a number between 0 and 1")
-
-     # Reshape the data
-    if channel_first==True:
-        pass
-    else:
-        data = data.reshape((1, data.shape[0], data.shape[1], data.shape[2]))
-
-    X, Y, Z, values = bz
-
-    print("X;Y;Z")
-    print(X,Y,Z)
+    X_sol, Y_sol, Z_sol, values_sol = data_solved
+    X_unsol, Y_unsol, Z_unsol, values_unsol = data_unsolved
 
     # Create figure and grid
     fig = plt.figure(figsize=(12, 8))
@@ -65,12 +28,18 @@ def plot_3d_voxels(data, bz, transparency_threshold=0, skew_factor=1, sampling_r
     ax_main = plt.subplot(gs[:, 1], projection='3d')
     ax_main.view_init(30, 340)
 
+    X_merge = np.concatenate((X_sol, X_unsol)).flatten()
+    Y_merge = np.concatenate((Y_sol, Y_unsol)).flatten()
+    Z_merge = np.concatenate((Z_sol, Z_unsol)).flatten()
+    draw_3d_box(ax=ax_main, x_min=min(X_merge), x_max=max(X_merge), y_min=min(Y_merge), y_max=max(Y_merge),
+                z_min=min(Z_merge), z_max=max(Z_merge))
+
+    # Set labels
     ax_main.set_xlabel(r'$a_p [\mathrm{AU}]$', fontsize=20, rotation=150, labelpad=20)
     ax_main.set_ylabel(r'$a_m [\mathrm{LU}]$', fontsize=20, labelpad=20)
     ax_main.set_zlabel(r'$a_{sm} [\mathrm{SLU}]$', fontsize=20, rotation=90, labelpad=20)
 
-    # p = ax_main.scatter(voxel_indices[:, 1], voxel_indices[:, 2], voxel_indices[:, 3], s=50, c=colors,  # marker='s',
-    #                    cmap=plt.get_cmap("magma"))
+    # Custom color map
     N = 256
     color_array = plt.get_cmap('Blues')(range(N))
     # change alpha values
@@ -79,85 +48,51 @@ def plot_3d_voxels(data, bz, transparency_threshold=0, skew_factor=1, sampling_r
     #color_array[:, 2] = np.linspace(0, 1, N)  # Let the green channel linearly increase
     #color_array[:, 1] = np.linspace(0, 1, N)  # Let the blue channel linearly increase
     #color_array[:, 0] = np.linspace(0, 1, N)  # Let the red channel linearly increase
-    newcmp = LinearSegmentedColormap.from_list(name="myColorMap", colors=color_array)
-    p = ax_main.scatter(X, Y, Z, s=1, c=values,
-                        cmap=newcmp)
 
-    # Generate the colorbar with adjusted position
-    cbar = fig.colorbar(p, ax=ax_main, pad=0.2, shrink=0.3)
+    # seismic_r is what barbara suggested
+    seismic = "seismic_r"
+    fading_blue = LinearSegmentedColormap.from_list(name="myColorMap", colors=color_array)  # Custom color map
+
+    p = ax_main.scatter(X_sol, Y_sol, Z_sol, s=30, c=values_sol, cmap=fading_blue)  # Plot properly solved points
+    q = ax_main.scatter(X_unsol, Y_unsol, Z_unsol, s=30, marker='x', color="black")  # Plot stiff, unsolved points
+
+    fig.colorbar(p, ax=ax_main, pad=0.2, shrink=0.3)  # Add colorbar
 
     plt.show()
 
-    # Create colormap and calculate color and transparency for non-zero voxels
-    magma_cmap = cm.get_cmap(colormap)
-    voxel_indices = np.argwhere(data > 0)
-    voxel_values = data[data > 0] / np.max(data)
 
+def draw_3d_box(ax, x_min, x_max, y_min, y_max, z_min, z_max):
+    # Define the 8 corners of the box
+    corners = [
+        [x_min, y_min, z_min],
+        [x_max, y_min, z_min],
+        [x_max, y_max, z_min],
+        [x_min, y_max, z_min],
+        [x_min, y_min, z_max],
+        [x_max, y_min, z_max],
+        [x_max, y_max, z_max],
+        [x_min, y_max, z_max]
+    ]
 
-    # Random sampling of non-zero points
-    sampled_indices = np.random.choice(np.arange(voxel_indices.shape[0]), size=int(voxel_indices.shape[0] * sampling_ratio), replace=False)
-    voxel_indices = voxel_indices[sampled_indices]
-    voxel_values = voxel_values[sampled_indices]
+    # Define the 12 edges of the box, each edge is a pair of corners
+    edges = [
+        [corners[0], corners[1]],
+        [corners[1], corners[2]],
+        [corners[2], corners[3]],
+        [corners[3], corners[0]],
+        [corners[4], corners[5]],
+        [corners[5], corners[6]],
+        [corners[6], corners[7]],
+        [corners[7], corners[4]],
+        [corners[0], corners[4]],
+        [corners[1], corners[5]],
+        [corners[2], corners[6]],
+        [corners[3], corners[7]]
+    ]
 
-    #Skew the values for visualisatin
-    skewed_values = voxel_values ** skew_factor
-
-    colors = magma_cmap(skewed_values)
-    print("color data: ", colors)
-    colors[:, 3] = np.where(voxel_values > transparency_threshold, voxel_values, 0)
-    print("After manipulation: ", colors)
-
-    # Plot the main 3D scatter plot
-    p = ax_main.scatter(voxel_indices[:, 1], voxel_indices[:, 2], voxel_indices[:, 3], s=50, c=colors, #marker='s',
-                        cmap=plt.get_cmap("magma"))
-
-    fig.colorbar(p, ax=ax_main)
-
-    if multi_view==True:
-        #Diffrent views
-        views = [
-            {'title': 'Perspective View', 'elev': 30, 'azim': -45},
-            {'title': 'Top View', 'elev': 90, 'azim': -95},
-            {'title': 'Bottom View', 'elev': -90, 'azim': -95},
-            {'title': 'Front View', 'elev': 5, 'azim': -85},
-            {'title': 'Right View', 'elev': 5, 'azim': -20},
-            {'title': 'Left View', 'elev': 5, 'azim': -160}
-        ]
-
-        # Plot the 3D different views scatter plot
-        fig = plt.figure(figsize=(12, 12))
-        for i, view in enumerate(views, start=1):
-            ax = fig.add_subplot(2, 3, i, projection='3d')
-            ax.scatter(voxel_indices[:, 1], voxel_indices[:, 2], voxel_indices[:, 3], c=colors, marker='s')
-            ax.view_init(elev=view['elev'], azim=view['azim'])
-            ax.set_title(view['title'])
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            ax.grid(False)
-            ax.xaxis.pane.set_edgecolor('k')
-            ax.yaxis.pane.set_edgecolor('k')
-            ax.zaxis.pane.set_edgecolor('k')
-
-            ax.xaxis.pane.set_linewidth(2)
-            ax.yaxis.pane.set_linewidth(2)
-            ax.zaxis.pane.set_linewidth(2)
-
-            ax.xaxis.pane.fill = False
-            ax.yaxis.pane.fill = False
-            ax.zaxis.pane.fill = False
-
-            # Set axes limits with a small margin
-            ax.set_xlim(0, data.shape[1])
-            ax.set_ylim(0, data.shape[2])
-            ax.set_zlim(0, data.shape[3])
-
-
-    # Tight layout and show the plot
-    plt.tight_layout()
-
-    # Save
-    if save_img==True:
-        #plt.savefig('Voxel.pdf')
-        plt.savefig('Voxel.png', dpi=75)
-    plt.show()
+    # Plot each edge
+    for edge in edges:
+        x_values = [edge[0][0], edge[1][0]]
+        y_values = [edge[0][1], edge[1][1]]
+        z_values = [edge[0][2], edge[1][2]]
+        ax.plot(x_values, y_values, z_values, color='black')
