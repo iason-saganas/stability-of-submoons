@@ -2,7 +2,7 @@ from utilities import *
 from matplotlib.patches import Circle
 import matplotlib.pyplot as plt
 
-__all__ = ['create_toy_satellite_and_planet', 'create_submoon_system']
+__all__ = ['create_toy_satellite_and_planet', 'create_earth_submoon_system', 'create_hot_jupiter_submoon_system']
 
 
 def create_toy_satellite_and_planet():
@@ -36,9 +36,43 @@ def create_toy_satellite_and_planet():
     return toy_satellite, toy_planet
 
 
-def create_submoon_system(visualize_with_plot: bool = False):
+def create_earth_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_HOURS, visualize_with_plot: bool = False):
     """
-    :ToDo Write documentation
+    This returns a planetary system, where the star is sun-like, the planet is earth-like and the moon is lunar-like.
+    The mass of the submoon is set to 4.2e15kg which is the submoon test mass of Kollmeier & Raymond.
+    The earth's quality factor and k2 love number are taken to be 280 and 0.3 respectively.
+    [see Lainey Q Parameters document in media folder.]
+    The moon's quality factor and k2 love number are taken to be 100 and 0.25 respectively, as per the caption of
+    figure 1 of Kollmeier & Raymond.
+    We also assume the same parameters for the submoon.
+
+    For the sun, we use the following result by Adrian J. Barker
+    (https://iopscience.iop.org/article/10.3847/2041-8213/ac5b63/pdf, see also https://arxiv.org/pdf/2307.13074 for an
+    important literature overview):
+
+    Q' = 3/2 * Q/k_2 ~ 10^7 (P_rot/(10 days))^2,
+
+    where P_rot is the rotation period of a sun-like star (mass range 0.2 - 1.2 M_odot) about its own axis.
+    To implement this formula, we set k_2_star = 1, such that the ratio Q/k can be fully represented in Q itself via
+
+    Q = 2/3 * Q' = 2/3 * 10^7 (P_rot/(10 days))^2.
+
+    In the DFE.'s the ratio Q/k2 appears.
+    This ratio must be equal to 2/3*Q'.
+    We set k=1 and the Q = 2/3*Q' thereby achieving the needed ratio.
+    This means, that any calculations done that grab the stars k2-value or Q-value are wrong.
+    (We don't do such calculations).
+
+    UPDATE 23.10.24: Actually, I now set the submoon mass to 100.000 x the test mass in Kollmeier and Raymond
+    because a small submoon test mass gives raise to a lot of skipped iterations due to detected stiffness, whereas
+    if the submoon is massive, a lot of those points definitely reach an unstable point before getting into
+    small scale oscillations.
+
+    visualize_with_plot: bool,      Used to plot an overview of the constructed system
+    P_rot_star_DAYS: float,         The rotation period of the star in days.
+    P_rot_planet_HOURS: float,      The rotation period of the planet in hours.
+    P_rot_moon_HOURS: float,        The rotation period of the moon in hours.
+
     """
 
     # get some parameters from solar system bodies
@@ -50,41 +84,42 @@ def create_submoon_system(visualize_with_plot: bool = False):
                                            name_of_celestial_body='Earth')
 
     # get some parameters from solar system bodies
-    ganymede_d = get_solar_system_bodies_data(file_to_read='constants/moons_solar_system.txt',
-                                              name_of_celestial_body='Ganymede')
-
     luna_d = get_solar_system_bodies_data(file_to_read='constants/moons_solar_system.txt',
                                           name_of_celestial_body='Moon')
 
     submoon_d = get_solar_system_bodies_data(file_to_read='constants/moons_solar_system.txt',
                                              name_of_celestial_body='Asteroid')
 
-    spin_frequency_sun = 1 / (3600 * sun_d.T_rotation_hours)
-    spin_frequency_earth = 1 / (3600 * earth_d.T_rotation_hours)
-    spin_frequency_luna = 1 / (3600 * luna_d.T_rotation_hours)
-    spin_frequency_ganymede = 1 / (3600 * ganymede_d.T_rotation_hours)
-    spin_frequency_submoon = 1 / (3600 * submoon_d.T_rotation_hours)
+    spin_frequency_sun = 1 / (3600 * (P_rot_star_DAYS*24))
+    spin_frequency_earth = 1 / (3600 * P_rot_planet_HOURS)
+    spin_frequency_luna = 1 / (3600 * P_rot_moon_HOURS)
+    spin_frequency_submoon = None  # This should not raise any errors since should not be used according to the DFE.'s
+
+    sun_Q = 2/3 * 10**7 * (P_rot_star_DAYS/10)**2
 
     sun = CelestialBody(mass=sun_d.m, density=sun_d.rho, semi_major_axis=sun_d.a,
-                        spin_frequency=spin_frequency_sun, love_number=sun_d.k,
-                        quality_factor=sun_d.Q, descriptive_index="s", name="sun",
+                        spin_frequency=spin_frequency_sun, love_number=1,
+                        quality_factor=sun_Q, descriptive_index="s", name="sun",
                         hierarchy_number=1, hosting_body=None)
 
     earth = CelestialBody(mass=earth_d.m, density=earth_d.rho, semi_major_axis=earth_d.a,
-                          spin_frequency=spin_frequency_earth, love_number=earth_d.k,
-                          quality_factor=earth_d.Q, descriptive_index="p", name="planet",
+                          spin_frequency=spin_frequency_earth, love_number=0.3,
+                          quality_factor=280, descriptive_index="p", name="planet",
                           hierarchy_number=2, hosting_body=sun)
 
     moon = CelestialBody(mass=luna_d.m, density=luna_d.rho, semi_major_axis=luna_d.a,
-                         spin_frequency=spin_frequency_luna, love_number=luna_d.k,
-                         quality_factor=luna_d.Q, descriptive_index="m", name="moon",
+                         spin_frequency=spin_frequency_luna, love_number=0.25,
+                         quality_factor=100, descriptive_index="m", name="moon",
                          hierarchy_number=3, hosting_body=earth)
 
-    submoon_mass = submoon_d.m/2.1/50
+    # submoon_mass = submoon_d.m/2.1/20
+    # submoon_mass = 4.2e15  # this is the test mass used by Kollmeier & Raymond
+    submoon_mass = .25 * submoon_d.m  # 25% of the lunar mass
     # submoon_mass = 1e-200
+    # submoon_mass = 1/3 * 6.39e23  # A third of mars' mass!
     submoon = CelestialBody(mass=submoon_mass, density=submoon_d.rho, semi_major_axis=submoon_d.a,
-                            spin_frequency=spin_frequency_submoon, love_number=submoon_d.k,
-                            quality_factor=submoon_d.Q, descriptive_index="sm", name="submoon",
+                            spin_frequency=spin_frequency_submoon, love_number=0.25,
+                            quality_factor=100, descriptive_index="sm", name="submoon",
                             hierarchy_number=4, hosting_body=moon)
 
     if visualize_with_plot:
@@ -130,4 +165,98 @@ def create_submoon_system(visualize_with_plot: bool = False):
 
         raise ValueError("This method needs to revised.")
     return sun, earth, moon, submoon
+
+
+
+def create_hot_jupiter_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_HOURS):
+    """
+
+
+
+
+    This returns a planetary system, where the star is sun-like, the planet is earth-like and the moon is lunar-like.
+    The mass of the submoon is set to 4.2e15kg which is the submoon test mass of Kollmeier & Raymond.
+    The earth's quality factor and k2 love number are taken to be 280 and 0.3 respectively.
+    [see Lainey Q Parameters document in media folder.]
+    The moon's quality factor and k2 love number are taken to be 100 and 0.25 respectively, as per the caption of
+    figure 1 of Kollmeier & Raymond.
+    We also assume the same parameters for the submoon.
+
+    For the sun, we use the following result by Adrian J. Barker
+    (https://iopscience.iop.org/article/10.3847/2041-8213/ac5b63/pdf, see also https://arxiv.org/pdf/2307.13074 for an
+    important literature overview):
+
+    Q' = 3/2 * Q/k_2 ~ 10^7 (P_rot/(10 days))^2,
+
+    where P_rot is the rotation period of a sun-like star (mass range 0.2 - 1.2 M_odot) about its own axis.
+    To implement this formula, we set k_2_star = 1, such that the ratio Q/k can be fully represented in Q itself via
+
+    Q = 2/3 * Q' = 2/3 * 10^7 (P_rot/(10 days))^2.
+
+    In the DFE.'s the ratio Q/k2 appears.
+    This ratio must be equal to 2/3*Q'.
+    We set k=1 and the Q = 2/3*Q' thereby achieving the needed ratio.
+    This means, that any calculations done that grab the stars k2-value or Q-value are wrong.
+    (We don't do such calculations).
+
+    UPDATE 23.10.24: Actually, I now set the submoon mass to 100.000 x the test mass in Kollmeier and Raymond
+    because a small submoon test mass gives raise to a lot of skipped iterations due to detected stiffness, whereas
+    if the submoon is massive, a lot of those points definitely reach an unstable point before getting into
+    small scale oscillations.
+
+    P_rot_star_DAYS: float,         The rotation period of the star in days.
+    P_rot_planet_HOURS: float,      The rotation period of the planet in hours.
+    P_rot_moon_HOURS: float,        The rotation period of the moon in hours.
+
+    """
+
+    # get some parameters from solar system bodies
+    sun_d = get_solar_system_bodies_data(file_to_read='constants/stars_solar_system.txt',
+                                         name_of_celestial_body='Sun')
+
+    # get some parameters from solar system bodies. The '_d' stands for '_data'.
+    planet_d = get_solar_system_bodies_data(file_to_read='constants/planets_solar_system.txt',
+                                           name_of_celestial_body='Jupiter')
+
+    # get some parameters from solar system bodies
+    neptune_d = get_solar_system_bodies_data(file_to_read='constants/planets_solar_system.txt',
+                                          name_of_celestial_body='Neptune')
+
+    submoon_d = get_solar_system_bodies_data(file_to_read='constants/moons_solar_system.txt',
+                                             name_of_celestial_body='Asteroid')
+
+    spin_frequency_sun = 1 / (3600 * (P_rot_star_DAYS*24))
+    spin_frequency_earth = 1 / (3600 * P_rot_planet_HOURS)
+    spin_frequency_luna = 1 / (3600 * P_rot_moon_HOURS)
+    spin_frequency_submoon = None  # This should not raise any errors since should not be used according to the DFE.'s
+
+    sun_Q = 2/3 * 10**7 * (P_rot_star_DAYS/10)**2
+
+    sun = CelestialBody(mass=sun_d.m, density=sun_d.rho, semi_major_axis=sun_d.a,
+                        spin_frequency=spin_frequency_sun, love_number=1,
+                        quality_factor=sun_Q, descriptive_index="s", name="sun",
+                        hierarchy_number=1, hosting_body=None)
+
+    planet = CelestialBody(mass=11planet_d.m, density=planet_d.rho, semi_major_axis=planet_d.a,
+                          spin_frequency=spin_frequency_earth, love_number=0.3,
+                          quality_factor=280, descriptive_index="p", name="planet",
+                          hierarchy_number=2, hosting_body=sun)
+
+    moon = CelestialBody(mass=neptune_d.m, density=neptune_d.rho, semi_major_axis=neptune_d.a,
+                         spin_frequency=spin_frequency_luna, love_number=0.25,
+                         quality_factor=100, descriptive_index="m", name="moon",
+                         hierarchy_number=3, hosting_body=planet)
+
+    # submoon_mass = submoon_d.m/2.1/20
+    # submoon_mass = 4.2e15  # this is the test mass used by Kollmeier & Raymond
+    submoon_mass = .25 * submoon_d.m  # 25% of the lunar mass
+    # submoon_mass = 1e-200
+    # submoon_mass = 1/3 * 6.39e23  # A third of mars' mass!
+    submoon = CelestialBody(mass=submoon_mass, density=submoon_d.rho, semi_major_axis=submoon_d.a,
+                            spin_frequency=spin_frequency_submoon, love_number=0.25,
+                            quality_factor=100, descriptive_index="sm", name="submoon",
+                            hierarchy_number=4, hosting_body=moon)
+
+
+    return sun, planet, moon, submoon
 
