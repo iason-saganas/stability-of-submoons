@@ -115,8 +115,7 @@ def create_earth_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_
 
     # submoon_mass = submoon_d.m/2.1/20
     # submoon_mass = 4.2e15  # this is the test mass used by Kollmeier & Raymond
-    submoon_mass = .25 * submoon_d.m  # 25% of the lunar mass
-    # submoon_mass =  luna_d.m * 1/10  # 1/10th of moon mass
+    submoon_mass =  luna_d.m * 1/10  # 1/10th of moon mass
     # submoon_mass = 1e-200
     # submoon_mass = 1/3 * 6.39e23  # A third of mars' mass!
     submoon = CelestialBody(mass=submoon_mass, density=submoon_d.rho, semi_major_axis=submoon_d.a,

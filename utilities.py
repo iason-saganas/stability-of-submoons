@@ -739,8 +739,7 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
     hn_list = [body.hn for body in planetary_system]
 
     # Perform mass and distance ratios check
-    # m_ratio = .1
-    m_ratio = .25  # For testing purposes
+    m_ratio = .1  # In order to not violate mathematical assumptions
     a_ratio = .3
     for index, hn in enumerate(hn_list):
         if hn == 1:
@@ -750,20 +749,16 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
             hosted_body = planetary_system[index]
             hosting_body = hosted_body.hosting_body
 
-            # No longer needed, since appropriateness of mass ratio is now checked dynamically inside the
-            # `solve_ivp_iterator` by tracking whether the distance between the larger body's geometric center
-            # and a subsystem's barycenter lies outside the larger body's radius.
-
-            # mass_ratio = hosted_body.mass / hosting_body.mass
-            # if mass_ratio > m_ratio:
-            #    raise ValueError(f"\n Exception inside 'bind_system_gravitationally' function: \n"
-            #                     f"Mass ratio between bodies {hosting_body.name} and {hosted_body.name} is too big.\n "
-            #                     f"Detected mass ratio: {mass_ratio}. Threshold: {m_ratio} "
-            #                     f"(assumption that needs to be checked!).\n Absolute mass values: {hosting_body.mass} "
-            #                     f"and {hosted_body.mass} respectively. \n")
-            # elif verbose:
-            #    print(f"Mass ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} passed.\n "
-            #          f"            Detected mass ratio: {mass_ratio}. Threshold: {m_ratio}.\n\n")
+            mass_ratio = hosted_body.mass / hosting_body.mass
+            if mass_ratio > m_ratio:
+               raise ValueError(f"\n Exception inside 'bind_system_gravitationally' function: \n"
+                                f"Mass ratio between bodies {hosting_body.name} and {hosted_body.name} is too big.\n "
+                                f"Detected mass ratio: {mass_ratio}. Threshold: {m_ratio} "
+                                f"(assumption that needs to be checked!).\n Absolute mass values: {hosting_body.mass} "
+                                f"and {hosted_body.mass} respectively. \n")
+            elif verbose:
+               print(f"Mass ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} passed.\n "
+                     f"            Detected mass ratio: {mass_ratio}. Threshold: {m_ratio}.\n\n")
 
 
 
@@ -1129,8 +1124,9 @@ def check_if_stiff(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_
     tracker.add_eta(eta)
     threshhold = 0.7
     # threshhold = 0.843
-    # if eta > threshhold - 0.05:
-    #     print("\t\t\tCurrent eta: ", eta, " at time point ", t/(3600 * 24 * 365 * 1e9), " Gyrs.")
+    # if eta > threshhold - 0.4:
+    if tracker.iter_counter == (2,4,8):
+        print("\t\t\tCurrent eta: ", eta, " at time point ", t/(3600 * 24 * 365 * 1e9), " Gyrs.")
     # threshhold = 0.65  # for testing purposes. Or maybe even keep this
     # threshhold = 0.4  # for testing purposes. Or maybe even keep this
 
