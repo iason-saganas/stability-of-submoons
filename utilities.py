@@ -241,102 +241,6 @@ def simple_barycenter(mass_ratio_small_to_big, radius_big, distance_small):
     return mass_ratio_small_to_big * 1/radius_big  * distance_small
 
 
-def check_barycentre_moon(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
-    """
-    Let the inputted variable `hosted_body`, represented by k, orbit a body j, which in turn orbits a body i.
-    This function takes k and returns the maximal (!) possible distance between the  k-j barycentre and j's geometric
-    centre, i.e. assuming that k is right now the furthest away from j at a=a_crit. a_crit in turn depends on body
-    i through the hill-radius.
-
-    We call the distance between the k-j barycentre and the geometric centre of j `alpha_max`. A straightforward
-    calculation can show that approximately
-
-        alpha_max = m_k/m_j * 1/R_j * 0.4 * R_hill
-
-    where 0.4 is from `get_critical_semi_major_axis`.
-    This gives the maximal distance in j-radii. We can use this function to ensure that for the moon and submoon,
-    alpha_max never exceeds 1.
-
-    EDIT
-    Instead of calculating the maximal conceivable distance between the geometric centre of j and the barycentre,
-    we now calculate the instantaneous position of the barycentre by
-
-    alpha = m_k/m_j * 1/R_j * a_k.
-
-    EDIT 2
-
-    We don't need check that alpha > 1 (-> break), the condition that alpha is not large w.r.t. the current semi-major-
-    axis of the hosting body is mathematically enough!
-
-    :return:
-    """
-    # Unpack the celestial bodies of the system to access their pre-defined properties and get current y-state
-    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
-    star, planet, moon, submoon = planetary_system
-
-    k = moon
-    j = k.hosting_body
-    gamma = k.mass / j.mass
-
-    alpha = gamma * 1/j.R  * a_p_m
-
-    relative_sma = a_m_sm / j.R
-
-    return alpha - 1/10 * relative_sma
-
-    # Alpha will be close or larger to 1 if the moon almost reached the critical semi-major-axis
-    # a_crit is approximated as a_crit = f * a_hill with f = 0.4
-    # In that case do not terminate the iteration, assuming the moon will escape either way (wrong in some cases)
-    # a_crit = 0.4 * get_hill_radius_relevant_to_body(hosted_body=moon)
-    # res = (a_crit - a_p_m)/a_crit
-    # print("MOON ALPHA: ", alpha, " under a_p_m of ", a_p_m)  # Debug statement
-
-    # if res > 0.1:
-    #     # The barycentre may lie outside radius of body with hierarchy number {k.hn}
-    #     # Activate since we're still far away from the critical semi-major-axis
-    #     return alpha - 1
-    # else:
-    #     print("NON ACTIVATION MOON EVENT")  # Debug statement
-    #     # Return an impossible condition in order to not activate the event
-    #     # at this point of the workflow assume that, in most cases, being within 10% of a_crit will lead to escape
-    #     # so there is no need to terminate the iteration
-    #     return alpha - np.inf
-
-
-def check_barycentre_submoon(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
-    """
-    A copy of `check_barycentre_moon` to check for the submoon barycenter
-    """
-    # Unpack the celestial bodies of the system to access their pre-defined properties and get current y-state
-    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
-    star, planet, moon, submoon = planetary_system
-
-    k = submoon
-    j = k.hosting_body
-    gamma = k.mass / j.mass
-
-    alpha = gamma * 1 / j.R * a_m_sm
-
-    relative_sma = a_m_sm / j.R
-
-    # Alpha will be close or larger to 1 if the moon almost reached the critical semi-major-axis
-    # a_crit is approximated as a_crit = f * a_hill with f = 0.4
-    # In that case do not terminate the iteration, assuming the moon will escape either way (wrong in some cases)
-    # a_crit = 0.4 * get_hill_radius_relevant_to_body(hosted_body=submoon)
-    # res = (a_crit - a_m_sm)/a_crit
-
-    # print("SUBMOON ALPHA: ", alpha)  # Debug statement
-    # if res > 0.1:
-        # Activate since we're still far away from the critical semi-major-axis
-        # The barycentre may lie outside radius of body with hierarchy number {k.hn}.
-        # return alpha - 1
-    # else:
-        # print("NON ACTIVATION SUBMOON EVENT")
-        # Return an impossible condition in order to not activate the event
-        # at this point of the workflow assume that, in most cases, being within 10% of a_crit will lead to escape
-        # so there is no need to terminate the iteration
-        # return alpha - np.inf
-
 def get_hill_radius_relevant_to_body(hosted_body: 'CelestialBody') -> float:
     """
     Gets the hill radius that is relevant to `hosted_body`, i.e. the gravitational sphere of influence exerted by the
@@ -1423,8 +1327,6 @@ def track_m_p_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_
     return a_p_m - crit_a
 
 update_values.terminal = False
-check_barycentre_submoon.terminal = True
-check_barycentre_moon.terminal = True
 track_sm_m_axis_1.terminal = True
 track_sm_m_axis_2.terminal = True
 track_m_p_axis_1.terminal = True
@@ -1513,20 +1415,10 @@ class RocheLimitGreaterThanCriticalSemiMajor(ValueError):
     pass
 
 
-class BarycentreEarlyOutsideOfMassiveBodyMoon(ValueError):
-    pass
-
-class BarycentreEarlyOutsideOfMassiveBodyPlanet(ValueError):
-    pass
-
-
 def sanity_check_initial_values(a_sm_0: float, a_m_0: float, a_p_0: float, planetary_system: List['CelestialBody']):
     """
     Sanity checks if the initial values relevant for termination of the simulation (semi-major-axis of moon, submoon
     and planet) don't, from the get-go, surpass or fall under their respective a_crit or roche-limit.
-    Furthermore, sanity checks that the applied mass ratio between submoon and moon and moon and planet is
-    appropriate in the sense that the variable `alpha` is not, from the get-go, larger than one. Otherwise, the
-    `check_barycentre_moon` and `check_barycentre_submoon` events won't trigger.
     """
     star, planet, moon, submoon = planetary_system
 
@@ -1568,22 +1460,6 @@ def sanity_check_initial_values(a_sm_0: float, a_m_0: float, a_p_0: float, plane
             raise InitialValuesOutsideOfLimits(
                 f'\t\tA priori ratio of initial semi-major-axis of {names[index]} and its parent bodys '
                 f'roche limit bigger than one: {val}')
-
-
-    # Check that the barycentres of the planet-moon and moon-submoon system don't a priori lie outside the planet
-    # or moon respectively.
-
-    alpha_p_m = simple_barycenter(moon.mass / planet.mass, planet.R, a_m_0)
-    alpha_m_sm = simple_barycenter(submoon.mass / moon.mass, moon.R, a_sm_0)
-
-    # print("A PRIORI CHECK ! Moon alpha in initial values check: ", alpha_p_m, " under a_p_m of ", a_m_0)  # Debug statement
-
-    if alpha_p_m > 1:
-        raise BarycentreEarlyOutsideOfMassiveBodyPlanet(f'\t\tBarycentre in moon-planet subsystem lies a priori {alpha_p_m*100}%\n'
-                                                  f'R_planet outside of planets surface. Should be < 1.')
-    if alpha_m_sm > 1:
-        raise BarycentreEarlyOutsideOfMassiveBodyMoon(f'\t\tBarycentre in submoon-moon subsystem lies a priori {alpha_m_sm*100}%\n'
-                                                  f'R_planet outside of planets surface. Should be < 1.')
 
 
 
@@ -2565,11 +2441,7 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                         "None": [],
                         "Some roche limit was greater than a_crit": [],
                         "Some initial value was under the roche or over the a_crit limit": [],
-                        "The planet's barycenter dipped outside of its radius a priori": [],
-                        "The moon's barycenter dipped outside of its radius a priori": [],
                         "Iteration is likely to be stiff": [],
-                        "The barycenter of the planet dipped outside its radius": [], # during evolution
-                        "The barycenter of the moon dipped outside its radius": [] # during evolution
                         }
     termination_reason_counter = {"Submoon fell under roche limit": 0,
                                   "Submoon exceeded a_crit": 0,
@@ -2579,12 +2451,9 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                   "None": 0,
                                   "Some roche limit was greater than a_crit": 0,
                                   "Some initial value was under the roche or over the a_crit limit": 0,
-                                  "The planet's barycenter dipped outside of its radius a priori": 0,
-                                  "The moon's barycenter dipped outside of its radius a priori": 0,
                                   "No termination event occurred.": 0,
                                   "Iteration is likely to be stiff": 0,
-                                  "The barycenter of the planet dipped outside its radius": 0, # during evolution
-                                  "The barycenter of the moon dipped outside its radius": 0} # during evolution
+                                  }
 
     solve_ivp_iterator_console_logger(planetary_system, mode=0)
     raise_warning("Please ensure the correct order of the initial state:\n "
@@ -2671,25 +2540,6 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                     sanity_check_initial_values(a_sm_0=y_init[0], a_m_0=y_init[1], a_p_0=y_init[2],
                                                 planetary_system=planetary_system)
 
-                except BarycentreEarlyOutsideOfMassiveBodyPlanet as er:
-                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
-                                      "The planet's barycenter dipped outside of its radius a priori",
-                                      None, tracker.get_sign_changes()])  # See docstring for explanation
-                    premature_termination_logger(er)
-                    termination_reason_counter["The planet's barycenter dipped outside of its radius a priori"] += 1
-                    interesting_runs["The planet's barycenter dipped outside of its radius a priori"].extend([identifier])
-                    results.append("-1")
-                    continue  # Continue to the next j iteration
-
-                except BarycentreEarlyOutsideOfMassiveBodyMoon as er:
-                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
-                                      "The moon's barycenter dipped outside of its radius a priori",
-                                      None, tracker.get_sign_changes()])  # See docstring for explanation
-                    premature_termination_logger(er)
-                    termination_reason_counter["The moon's barycenter dipped outside of its radius a priori"] += 1
-                    interesting_runs["The moon's barycenter dipped outside of its radius a priori"].extend([identifier])
-                    results.append("-1")
-                    continue  # Continue to the next j iteration
 
                 except InitialValuesOutsideOfLimits as er:
                     lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
@@ -2723,11 +2573,9 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
                 # define events to track and values to update and a list describing the events
                 list_of_all_events = [update_values, track_sm_m_axis_1, track_sm_m_axis_2,
-                                      track_m_p_axis_1, track_m_p_axis_2, check_if_stiff,
-                                      check_barycentre_moon, check_barycentre_submoon]
+                                      track_m_p_axis_1, track_m_p_axis_2, check_if_stiff]
                 keys = ["Values were updated.", "Submoon fell under roche limit", "Submoon exceeded a_crit",
-                        "Moon fell under roche limit", "Moon exceeded a_crit", "Iteration is likely to be stiff",
-                        "The barycenter of the planet dipped outside its radius", "The barycenter of the moon dipped outside its radius"]
+                        "Moon fell under roche limit", "Moon exceeded a_crit", "Iteration is likely to be stiff"]
 
                 # evolve to 4.5 Bn. years
                 final_time = turn_billion_years_into_seconds(4.5)
@@ -2756,8 +2604,6 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
                 # If termination event occurred, find termination reason
                 termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
-                if termination_reason == "The barycenter of the planet dipped outside its radius":
-                    stop
                 termination_reason_old = termination_reason
 
                 # Manual override to force tanh iteration for each iteration (pickle objects called "Gamma")
