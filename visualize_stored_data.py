@@ -1,7 +1,7 @@
 from utilities import *
 import numpy as np
 
-data_name = "integration_2024-11-17 21:51:02.236556.pickle"
+data_name = "earth_like_integration_2025-03-18 13:28:34.819354.pickle"
 fn = data_name[:-14]  # cut the .pickle ending and the microseconds
 data = unpickle_me_this(f"data_storage/{data_name}")
 

@@ -4,7 +4,7 @@ from warnings import warn as raise_warning
 import pandas as pd
 from typing import Union, List
 from scipy.integrate import solve_ivp
-# from style_components.matplotlib_style import *
+from style_components.matplotlib_style import *
 import matplotlib.pyplot as plt
 import pickle
 from style_components.voxel_plotter import plot_3d_voxels_initial_states, plot_3d_voxels_final_states
@@ -13,7 +13,7 @@ import datetime
 import time
 
 # Delete and import instead from style_components
-plt.style.use("dark_background")
+"""plt.style.use("dark_background")
 red = (0.74, 0.1, 0.1, 1)
 light_red = (0.74, 0.1, 0.1, 0.4)
 blue = (0, 0.37, 0.99, 1)
@@ -22,7 +22,7 @@ lighter_blue = (0.42, 0.8, 0.93, 0.3)
 lightest_blue = (0.42, 0.8, 0.93, 0.1)
 green = (0.23, 0.85, 0.25, 1)
 light_green = (0.23, 0.85, 0.25, 0.4)
-yellow = (0.89, 0.89, 0)
+yellow = (0.89, 0.89, 0)"""
 
 AU = 1.496e11
 LU = 384.4e6  # 'Lunar unit', the approximate distance between earth and earth's moon
@@ -225,13 +225,125 @@ def get_standard_grav_parameter(hosting_body: 'CelestialBody', hosted_body: 'Cel
     return G * (hosting_body.mass + hosted_body.mass)
 
 
+def simple_barycenter(mass_ratio_small_to_big, radius_big, distance_small):
+    """
+    This function takes
+
+    :param mass_ratio_small_to_big:     The mass ratio of a satellite to its hosting body,
+    :param radius_big:                  The radius of the hosting body and
+    :param distance_small:              The semi-major axis of the satellite,
+
+    to return the
+
+    :return:        approximate position of the barycenter in hosting body's radii units away from the hosting body's
+                    geometric center. The returned variable, called `alpha` is calculated as in `check_barycentre_moon`.
+    """
+    return mass_ratio_small_to_big * 1/radius_big  * distance_small
+
+
+def check_barycentre_moon(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    """
+    Let the inputted variable `hosted_body`, represented by k, orbit a body j, which in turn orbits a body i.
+    This function takes k and returns the maximal (!) possible distance between the  k-j barycentre and j's geometric
+    centre, i.e. assuming that k is right now the furthest away from j at a=a_crit. a_crit in turn depends on body
+    i through the hill-radius.
+
+    We call the distance between the k-j barycentre and the geometric centre of j `alpha_max`. A straightforward
+    calculation can show that approximately
+
+        alpha_max = m_k/m_j * 1/R_j * 0.4 * R_hill
+
+    where 0.4 is from `get_critical_semi_major_axis`.
+    This gives the maximal distance in j-radii. We can use this function to ensure that for the moon and submoon,
+    alpha_max never exceeds 1.
+
+    EDIT
+    Instead of calculating the maximal conceivable distance between the geometric centre of j and the barycentre,
+    we now calculate the instantaneous position of the barycentre by
+
+    alpha = m_k/m_j * 1/R_j * a_k.
+
+    EDIT 2
+
+    We don't need check that alpha > 1 (-> break), the condition that alpha is not large w.r.t. the current semi-major-
+    axis of the hosting body is mathematically enough!
+
+    :return:
+    """
+    # Unpack the celestial bodies of the system to access their pre-defined properties and get current y-state
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+    star, planet, moon, submoon = planetary_system
+
+    k = moon
+    j = k.hosting_body
+    gamma = k.mass / j.mass
+
+    alpha = gamma * 1/j.R  * a_p_m
+
+    relative_sma = a_m_sm / j.R
+
+    return alpha - 1/10 * relative_sma
+
+    # Alpha will be close or larger to 1 if the moon almost reached the critical semi-major-axis
+    # a_crit is approximated as a_crit = f * a_hill with f = 0.4
+    # In that case do not terminate the iteration, assuming the moon will escape either way (wrong in some cases)
+    # a_crit = 0.4 * get_hill_radius_relevant_to_body(hosted_body=moon)
+    # res = (a_crit - a_p_m)/a_crit
+    # print("MOON ALPHA: ", alpha, " under a_p_m of ", a_p_m)  # Debug statement
+
+    # if res > 0.1:
+    #     # The barycentre may lie outside radius of body with hierarchy number {k.hn}
+    #     # Activate since we're still far away from the critical semi-major-axis
+    #     return alpha - 1
+    # else:
+    #     print("NON ACTIVATION MOON EVENT")  # Debug statement
+    #     # Return an impossible condition in order to not activate the event
+    #     # at this point of the workflow assume that, in most cases, being within 10% of a_crit will lead to escape
+    #     # so there is no need to terminate the iteration
+    #     return alpha - np.inf
+
+
+def check_barycentre_submoon(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    """
+    A copy of `check_barycentre_moon` to check for the submoon barycenter
+    """
+    # Unpack the celestial bodies of the system to access their pre-defined properties and get current y-state
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+    star, planet, moon, submoon = planetary_system
+
+    k = submoon
+    j = k.hosting_body
+    gamma = k.mass / j.mass
+
+    alpha = gamma * 1 / j.R * a_m_sm
+
+    relative_sma = a_m_sm / j.R
+
+    # Alpha will be close or larger to 1 if the moon almost reached the critical semi-major-axis
+    # a_crit is approximated as a_crit = f * a_hill with f = 0.4
+    # In that case do not terminate the iteration, assuming the moon will escape either way (wrong in some cases)
+    # a_crit = 0.4 * get_hill_radius_relevant_to_body(hosted_body=submoon)
+    # res = (a_crit - a_m_sm)/a_crit
+
+    # print("SUBMOON ALPHA: ", alpha)  # Debug statement
+    # if res > 0.1:
+        # Activate since we're still far away from the critical semi-major-axis
+        # The barycentre may lie outside radius of body with hierarchy number {k.hn}.
+        # return alpha - 1
+    # else:
+        # print("NON ACTIVATION SUBMOON EVENT")
+        # Return an impossible condition in order to not activate the event
+        # at this point of the workflow assume that, in most cases, being within 10% of a_crit will lead to escape
+        # so there is no need to terminate the iteration
+        # return alpha - np.inf
+
 def get_hill_radius_relevant_to_body(hosted_body: 'CelestialBody') -> float:
     """
     Gets the hill radius that is relevant to `hosted_body`, i.e. the gravitational sphere of influence exerted by the
     body that `hosted_body` orbits.
 
     Let i, j, k represent hierarchy numbers, with i < j < k, i.e. `i` is the most 'un-nested' body and `k` is very
-    nested. `k` orbits `j` orbits `i`.
+    nested: `k` orbits `j` orbits `i`.
 
     Then, the hill-radius is defined as
 
@@ -734,16 +846,22 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
             hosted_body = planetary_system[index]
             hosting_body = hosted_body.hosting_body
 
-            mass_ratio = hosted_body.mass / hosting_body.mass
-            if mass_ratio > m_ratio:
-                raise ValueError(f"\n Exception inside 'bind_system_gravitationally' function: \n"
-                                 f"Mass ratio between bodies {hosting_body.name} and {hosted_body.name} is too big.\n "
-                                 f"Detected mass ratio: {mass_ratio}. Threshold: {m_ratio} "
-                                 f"(assumption that needs to be checked!).\n Absolute mass values: {hosting_body.mass} "
-                                 f"and {hosted_body.mass} respectively. \n")
-            elif verbose:
-                print(f"Mass ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} passed.\n "
-                      f"            Detected mass ratio: {mass_ratio}. Threshold: {m_ratio}.\n\n")
+            # No longer needed, since appropriateness of mass ratio is now checked dynamically inside the
+            # `solve_ivp_iterator` by tracking whether the distance between the larger body's geometric center
+            # and a subsystem's barycenter lies outside the larger body's radius.
+
+            # mass_ratio = hosted_body.mass / hosting_body.mass
+            # if mass_ratio > m_ratio:
+            #    raise ValueError(f"\n Exception inside 'bind_system_gravitationally' function: \n"
+            #                     f"Mass ratio between bodies {hosting_body.name} and {hosted_body.name} is too big.\n "
+            #                     f"Detected mass ratio: {mass_ratio}. Threshold: {m_ratio} "
+            #                     f"(assumption that needs to be checked!).\n Absolute mass values: {hosting_body.mass} "
+            #                     f"and {hosted_body.mass} respectively. \n")
+            # elif verbose:
+            #    print(f"Mass ratio sanity check between bodies {hosting_body.name} and {hosted_body.name} passed.\n "
+            #          f"            Detected mass ratio: {mass_ratio}. Threshold: {m_ratio}.\n\n")
+
+
 
             if hosted_body.hn == 2:
                 # Semi-major-axis of hosting.body is not defined => no semi-major-axis ratio
@@ -867,7 +985,7 @@ def state_vector_plot(time_points, solution, derivative, planetary_system, list_
         # Plot derivatives
         if plot_derivatives:
             ax2 = ax.twinx()
-            ax2.plot(time_normed, der, color=color, lw=2, ls="--", markersize=0)
+            ax2.plot(time_normed, der, color=color, lw=0, markersize=2, marker=".")
             if derivative_old is not None:
                 der_old = derivative_old / dy_dt_norm
                 ax2.plot(time_normed, der_old, color="purple", lw=2, ls="--", markersize=0)
@@ -1003,15 +1121,15 @@ def submoon_system_derivative_approximant(t, y, planetary_system: List['Celestia
     omega_s_dot = - get_omega_factors(star) * c_sign(omega_s - n_s_p, t=True) * planet.mass ** 2 * a_s_p ** (-6)
 
     # Before defining and returning derivative vector, check quality of tanh approximation
-    delta_angles = np.array([omega_m - n_p_m, omega_m - n_m_sm, omega_p - n_s_p, omega_p - n_p_m, omega_s - n_s_p])
-    relative_residuals = np.abs(np.sign(delta_angles)-c_sign(delta_angles, t=True))/np.sign(delta_angles)
-    delta_angle_names = np.array(["omega_m - n_p_m", "omega_m - n_m_sm", "omega_p - n_s_p", "omega_p - n_p_m", "omega_s - n_s_p"])
-    if np.any(relative_residuals > .1):
-        where = np.where(relative_residuals > .1)
-        angle_names = delta_angle_names[where]
-        print("\t\tCAUTION: TANH APPROXIMATION DEVIATES FROM ACTUAL SIGN FOR: ", angle_names,
-              " BY % ", relative_residuals[where], "; Real sign array ", np.sign(delta_angles), "\n\t used sign array:"
-              , c_sign(delta_angles, t=True))
+    # delta_angles = np.array([omega_m - n_p_m, omega_m - n_m_sm, omega_p - n_s_p, omega_p - n_p_m, omega_s - n_s_p])
+    # relative_residuals = np.abs(np.sign(delta_angles)-c_sign(delta_angles, t=True))/np.sign(delta_angles)
+    # delta_angle_names = np.array(["omega_m - n_p_m", "omega_m - n_m_sm", "omega_p - n_s_p", "omega_p - n_p_m", "omega_s - n_s_p"])
+    # if np.any(relative_residuals > .1):
+    #    where = np.where(relative_residuals > .1)
+    #    angle_names = delta_angle_names[where]
+    #    print("\t\tCAUTION: TANH APPROXIMATION DEVIATES FROM ACTUAL SIGN FOR: ", angle_names,
+    #          " BY % ", relative_residuals[where], "; Real sign array ", np.sign(delta_angles), "\n\t used sign array:"
+    #          , c_sign(delta_angles, t=True))
 
     # Define and return the derivative vector
     dy_dt = [a_m_sm_dot, a_p_m_dot, a_s_p_dot, omega_m_dot, omega_p_dot, omega_s_dot]
@@ -1107,14 +1225,13 @@ def check_if_stiff(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_
     tracker.add_eta(eta)
     threshhold = 0.7
     # threshhold = 0.843
-    if eta > threshhold - 0.05:
-        print("\t\t\tCurrent eta: ", eta, " at time point ", t/(3600 * 24 * 365 * 1e9), " Gyrs.")
+    # if eta > threshhold - 0.05:
+    #     print("\t\t\tCurrent eta: ", eta, " at time point ", t/(3600 * 24 * 365 * 1e9), " Gyrs.")
     # threshhold = 0.65  # for testing purposes. Or maybe even keep this
     # threshhold = 0.4  # for testing purposes. Or maybe even keep this
 
     control_plot = True
     if control_plot and tracker.eta_chain[current_step_index] > threshhold and tracker.iter_counter == (3,4,7):
-        print("SHould have entered this loop for 347")
         time = tracker.t
         vals = tracker.y[:, 3]
         fig, ax = plt.subplots()
@@ -1268,8 +1385,8 @@ def track_sm_m_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu
     #    print("val of a_sm: ", a_m_sm, " roche limit: ", rl)
     return a_m_sm - rl
 
-
 def track_sm_m_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+
     # Track: Will the submoon escape the moon's influence?
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
@@ -1305,8 +1422,9 @@ def track_m_p_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_
     #     print("\t\tThe moons's semi-major-axis surpassed the critical semi-major-axis.")
     return a_p_m - crit_a
 
-
 update_values.terminal = False
+check_barycentre_submoon.terminal = True
+check_barycentre_moon.terminal = True
 track_sm_m_axis_1.terminal = True
 track_sm_m_axis_2.terminal = True
 track_m_p_axis_1.terminal = True
@@ -1395,10 +1513,20 @@ class RocheLimitGreaterThanCriticalSemiMajor(ValueError):
     pass
 
 
+class BarycentreEarlyOutsideOfMassiveBodyMoon(ValueError):
+    pass
+
+class BarycentreEarlyOutsideOfMassiveBodyPlanet(ValueError):
+    pass
+
+
 def sanity_check_initial_values(a_sm_0: float, a_m_0: float, a_p_0: float, planetary_system: List['CelestialBody']):
     """
-    Sanity checks if the initial values relevant for termination of the simulation (semi-major-axis of moon and submoon
-    and planet) don't from the get-go surpass or fall under their respective a_crit or roche-limit.
+    Sanity checks if the initial values relevant for termination of the simulation (semi-major-axis of moon, submoon
+    and planet) don't, from the get-go, surpass or fall under their respective a_crit or roche-limit.
+    Furthermore, sanity checks that the applied mass ratio between submoon and moon and moon and planet is
+    appropriate in the sense that the variable `alpha` is not, from the get-go, larger than one. Otherwise, the
+    `check_barycentre_moon` and `check_barycentre_submoon` events won't trigger.
     """
     star, planet, moon, submoon = planetary_system
 
@@ -1442,6 +1570,23 @@ def sanity_check_initial_values(a_sm_0: float, a_m_0: float, a_p_0: float, plane
                 f'roche limit bigger than one: {val}')
 
 
+    # Check that the barycentres of the planet-moon and moon-submoon system don't a priori lie outside the planet
+    # or moon respectively.
+
+    alpha_p_m = simple_barycenter(moon.mass / planet.mass, planet.R, a_m_0)
+    alpha_m_sm = simple_barycenter(submoon.mass / moon.mass, moon.R, a_sm_0)
+
+    # print("A PRIORI CHECK ! Moon alpha in initial values check: ", alpha_p_m, " under a_p_m of ", a_m_0)  # Debug statement
+
+    if alpha_p_m > 1:
+        raise BarycentreEarlyOutsideOfMassiveBodyPlanet(f'\t\tBarycentre in moon-planet subsystem lies a priori {alpha_p_m*100}%\n'
+                                                  f'R_planet outside of planets surface. Should be < 1.')
+    if alpha_m_sm > 1:
+        raise BarycentreEarlyOutsideOfMassiveBodyMoon(f'\t\tBarycentre in submoon-moon subsystem lies a priori {alpha_m_sm*100}%\n'
+                                                  f'R_planet outside of planets surface. Should be < 1.')
+
+
+
 def premature_termination_logger(er):
     print("\t\tStability status: INIT VAL ER")
     print("\t\tTermination reason: Bad initial value parameters.")
@@ -1468,12 +1613,14 @@ def log_results(status, termination_reason, time_points):
     print("\t\tTermination reason: ", termination_reason)
     print(f"\t\tNum of time steps taken: {len(time_points)}, age reached: "
           f"{turn_seconds_to_years(time_points[-1])} years.")
+    print("\t\tGoing to next iteration.\n")
+    print("\n------------------------------------------\n\n")
 
     return stability_status
 
 
 def plt_results(sol_object, planetary_system, list_of_mus, print_sol_object=False, save=False, show=True,
-                old_state=None):
+                old_state=None, plot_derivatives=False):
     # Unpack variables outputted by solution object.
     (time_points, solution, t_events, y_events, num_of_eval, num_of_eval_jac, num_of_lu_decompositions, status,
      message, success) = unpack_solve_ivp_object(sol_object)
@@ -1481,7 +1628,7 @@ def plt_results(sol_object, planetary_system, list_of_mus, print_sol_object=Fals
         print("sol_object : ", sol_object)
 
     state_vector_plot(time_points, solution, submoon_system_derivative, planetary_system, list_of_mus, show=show,
-                      save=save, plot_derivatives=False, old_state=old_state)
+                      save=save, plot_derivatives=plot_derivatives, old_state=old_state)
 
 
 def find_termination_reason(status, t_events, keys):
@@ -1495,12 +1642,20 @@ def find_termination_reason(status, t_events, keys):
 
 
 def document_result(status, termination_reason, time_points, results, i, j, k,
-                    y_init, y_final, termination_reason_counter, lifetimes, whole_solution_object):
+                    y_init, y_final, termination_reason_counter, lifetimes, whole_solution_object,
+                    interesting_events_dict):
+
     stability_status = log_results(status, termination_reason, time_points)  # Prints in terminal
+
     results.append(stability_status)  # Appends to object that is returned at the end of grid search
+
     lifetimes.append([(i, j, k,), turn_seconds_to_years(np.max(time_points)), y_init, y_final,
                       termination_reason, whole_solution_object, tracker.get_sign_changes()])
+
     termination_reason_counter[str(termination_reason)] += 1
+
+    if str(termination_reason) != "No termination event occurred.":
+        interesting_events_dict[str(termination_reason)].extend([(i,j,k)])
 
 
 def pickle_me_this(filename: str, data_to_pickle: object):
@@ -1869,7 +2024,7 @@ def sanity_check_with_analytical_sol_if_possible(planetary_system, mu_m_sm, mu_p
     sign_counters = tracker.get_sign_changes()
     if sign_counters != [0, 0, 0]:
         print("\t\tAnalytic comparison not applicable, sign changes in (a_sm, a_m, a_p): ", sign_counters)
-        print("\n------------------------------------------\n")
+        # print("\n------------------------------------------\n")
         return
 
     # sign_counters == [0, 0, 0], therefore Comparison applicable
@@ -1934,7 +2089,7 @@ def sanity_check_with_analytical_sol_if_possible(planetary_system, mu_m_sm, mu_p
                 raise ValueError("Case 2. The numeric solution is too far off from the analytic solution.")
         else:
             raise ValueError("Unknown case.")
-    print("\n------------------------------------------\n")  # End
+    # print("\n------------------------------------------\n")  # End
 
 
 def calculate_relative_neighboring_diffs(arr):
@@ -2107,9 +2262,9 @@ def detect_divergence_2(t_arr, y_arr):
     return False
 
 
-def save_metadata(date, lengths, real_physical_varied_ranges, omega0_vals, planetary_system, further_notes=None):
+def save_metadata(date, case_prefix, lengths, real_physical_varied_ranges, omega0_vals, planetary_system, interesting_runs, further_notes=None):
     # lengths is essentially (10, 10, 10)
-    file = open(f"data_storage/metadata_{date}.txt", "w")
+    file = open(f"data_storage/metadata_{case_prefix}_{date}.txt", "w")
 
     # Write a string to the file
     file.write(f"This is a run on the {date}\n")
@@ -2141,11 +2296,25 @@ def save_metadata(date, lengths, real_physical_varied_ranges, omega0_vals, plane
         )
         file.write(output)
 
+    file.write("\n\nFurthermore, following interesting events have been clocked:\n")
+
+    for key, events in interesting_runs.items():
+        event_count = len(events)
+        file.write(f"{key} ({event_count} # events)\n")
+
+        if event_count == 0:
+            file.write("\t---\n")
+        else:
+            for el in events:
+                file.write(f"\t{el}\n")
+
+        file.write("\n")  # Add a blank line for better readability
+
     # Close the file
     file.close()
 
 
-def construct_debug_plot(debug, idc, cc, plot_dt_systematics, rest):
+def construct_debug_plot(debug, idc, cc, plot_dt_systematics, rest, plot_derivatives):
     """
 
     If the current iteration `id` equals to the iteration `cc`, information and plots for `cc` will be
@@ -2158,11 +2327,13 @@ def construct_debug_plot(debug, idc, cc, plot_dt_systematics, rest):
     :param plot_dt_systematics: bool, Plots the evolution of the time difference between analytic
                                            and numeric divergence.
    :param rest: np.array       Other necessary quantites for plotting
+   :param plot_derivatives: bool, Plots the found derivative state vectors on a secondary axis (right).
 
     time_points, sol, sol_object, y_init, planetary_system, list_of_std_mus = rest
 
     :return:
     """
+    print("tracker.get_sign_changes()", tracker.get_sign_changes())
     if idc == cc and debug:
         print("\t\tConstructing debug plot at self set iteration.")
         time_points, sol, sol_object, y_init, planetary_system, list_of_std_mus = rest
@@ -2186,7 +2357,7 @@ def construct_debug_plot(debug, idc, cc, plot_dt_systematics, rest):
                 tot_err, " but this already ", tot_err * 100 / ANA_final_sm,
                 " % of the final analytic solution.")
         plt_results(sol_object=sol_object, print_sol_object=False, planetary_system=planetary_system,
-                    list_of_mus=list_of_std_mus, show=True, save=False)
+                    list_of_mus=list_of_std_mus, show=True, save=False, plot_derivatives=plot_derivatives)
     elif plot_dt_systematics and idc == (10, 10, 10):
         # Really, what you should plot here is not the total number of steps, but the mean relative
         # step-size after the transition point.
@@ -2248,7 +2419,8 @@ def check_quality_of_approximation(tanh_solution, np_sign_solution):
     """
     Checks whether the numeric solution of the canonical DFEs (`np_sign_solution`) matches that
     of the hyperbolic tangent approximation (`tanh_solution`) up the maximum time point at which `np_sign_solution`
-    was reported before the stiffness termination event kicked in.
+    was reported before the stiffness termination event kicked in (or whichever solution has the least number of
+    points).
     This assumes that both `tanh_solution` and `np_sign_solution` have the same support points, which is the case
     if `t_eval` is specified in `solve_ivp`.
     WARNING: This check is only performed for the semi-major-axes of the bodies.
@@ -2259,22 +2431,58 @@ def check_quality_of_approximation(tanh_solution, np_sign_solution):
     a_m_sign = np_sign_solution[1, :]
     a_p_sign = np_sign_solution[2, :]
 
-    final_time_index = len(a_sm_sign)-1
+    a_sm_tanh = tanh_solution[0, :]
+    a_m_tanh = tanh_solution[1, :]
+    a_p_tanh = tanh_solution[2, :]
 
-    a_sm_tanh = tanh_solution[0, :][:final_time_index+1]
-    a_m_tanh = tanh_solution[1, :][:final_time_index+1]
-    a_p_tanh = tanh_solution[2, :][:final_time_index+1]
+    if len(a_sm_sign) < len(a_sm_tanh):
+        sign_solution_smaller = True
+    else:
+        sign_solution_smaller = False
+
+    if sign_solution_smaller:
+        final_time_index = len(a_sm_sign) - 1
+
+        a_sm_tanh = a_sm_tanh[:final_time_index + 1]
+        a_m_tanh = a_m_tanh[:final_time_index + 1]
+        a_p_tanh = a_p_tanh[:final_time_index + 1]
+    else:
+        final_time_index = len(a_sm_tanh) - 1
+
+        a_sm_sign = a_sm_sign[:final_time_index + 1]
+        a_m_sign = a_m_sign[:final_time_index + 1]
+        a_p_sign = a_p_sign[:final_time_index + 1]
+
 
     rel_dev = np.array([np.abs(t-s)/s for t, s in zip([a_sm_sign, a_m_sign, a_p_sign], [a_sm_tanh, a_m_tanh, a_p_tanh])])
+
     if np.any(rel_dev > .01):
         print("\t\tERROR: The hyperbolic tangent approximator lead to relative deviations > 1% in the solutions. Array:"
               f"\t\t\nmax. deviation in each case (a_sm, a_m, a_p): ", [np.max(ar) for ar in rel_dev], ".")
-        raise ValueError("The hyperbolic tangent approximation error.")
+        raise ValueError("tanh approximation deviation.")
+
+
+def interesting_sign_flip_occured():
+    """
+
+    Extracts the signs of the solved gradients of the run of the y-state-vector and checks whether the gradients or positive
+    definite or not. If not, it indicates a body, e.g., having fallen in and then migrating outwards again.
+    This function should only be activated if the run was not stiff. Returns the iteration_counter.
+
+    """
+    num_of_sign_changes = np.array(tracker.get_sign_changes())
+    if np.any(num_of_sign_changes > 0):
+        return True
+    else:
+        return False
+
+
 
 
 def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y_init: list, planetary_system: list,
-                       list_of_std_mus: list, use_initial_values=False, upper_lim_planet=30,
-                       lower_lim_planet=None, debug_plot=False, further_notes = None) -> list:
+                       list_of_std_mus: list, use_initial_values=False, upper_lim_planet=30, lower_lim_planet=None,
+                       debug_plot=False, further_notes = None, analyze_iter=False, specific_counter=None, case_prefix="",
+                       force_tanh_approx=False) -> list:
     # noinspection StructuralWrap
     """
     The main function executing the numerical integration of the submoon system.
@@ -2302,8 +2510,8 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
             [0] `iteration identifier` (natural numbers) that can be turned into real coordinates using the returned
             `physically_varied_ranges`, [1] the lifetime in this iteration in years, [2] the initial and [3] final state
              vector (None one if iteration ended prematurely), [4] the termination reason and [5] the whole solution
-             object (None if there was none), [6 ]the number of sign changes in the semi-major-axis of submoon,
-             moon and planet.
+             object (None if there was none), [6] the number of sign changes in the semi-major-axis of submoon,
+             moon and planet (likely due to stiffness most of the time, possibly because they are actual sign changes).
 
             Here, `iteration identifier` is a coordinate triple that specifies the edges of the grid search, e.g.
             (5 5 1).
@@ -2327,15 +2535,42 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
     implicitly in AU.
                                         If not specified, will use the star's Roche Limit.
     :param debug_plot:         bool,    If true, plots the celestial bodies' trajectories for each point of the grid.
+    :param analyze_iter:       bool,    If true, does not vary the semi-major-axes but instead just does what the
+                                        code would do in the i-j-k-th iteration if parameter `specific_counter` is
+                                        (i,j,k).
+    :param specific_counter: tuple,     Tuple of three numbers indicating for which itereation counter to execute
+                                        the code (see `analyze_iter` variable). i, j, k should be the value of the
+                                        outer, middle and inner counter respectively.
+    :param force_tanh_approx: bool,     If true, after each iteration of the np.sign differential equations, the
+                                        np.tanh differential equations are simulated too, independent of whether
+                                        the np.sign DFEs solutions ended up stiff. Very useful for analysis
+                                        of the difference between np.sign and np.tanh solutions.
 
     :return:                   tuple,   Containing information objects for all iterations:
                                         results, lifetimes, termination_reason_counter, physically_varied_ranges
 
     """
+
     start_time = time.time()
     results = []  # contains strings "-1", "+1" and "NUM ER" for each iteration,
     # indicating success status of integration
     lifetimes = []
+    interesting_runs = {"tanh() model deviated early on from signum() model: ": [],
+                        "Sign flip in any quantity without being stiff: ": [],
+                        "Submoon fell under roche limit": [],
+                        "Submoon exceeded a_crit": [],
+                        "Moon fell under roche limit": [],
+                        "Moon exceeded a_crit": [],
+                        "Bad initial values input": [],
+                        "None": [],
+                        "Some roche limit was greater than a_crit": [],
+                        "Some initial value was under the roche or over the a_crit limit": [],
+                        "The planet's barycenter dipped outside of its radius a priori": [],
+                        "The moon's barycenter dipped outside of its radius a priori": [],
+                        "Iteration is likely to be stiff": [],
+                        "The barycenter of the planet dipped outside its radius": [], # during evolution
+                        "The barycenter of the moon dipped outside its radius": [] # during evolution
+                        }
     termination_reason_counter = {"Submoon fell under roche limit": 0,
                                   "Submoon exceeded a_crit": 0,
                                   "Moon fell under roche limit": 0,
@@ -2344,8 +2579,12 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                   "None": 0,
                                   "Some roche limit was greater than a_crit": 0,
                                   "Some initial value was under the roche or over the a_crit limit": 0,
+                                  "The planet's barycenter dipped outside of its radius a priori": 0,
+                                  "The moon's barycenter dipped outside of its radius a priori": 0,
                                   "No termination event occurred.": 0,
-                                  "Iteration is likely to be stiff": 0}
+                                  "Iteration is likely to be stiff": 0,
+                                  "The barycenter of the planet dipped outside its radius": 0, # during evolution
+                                  "The barycenter of the moon dipped outside its radius": 0} # during evolution
 
     solve_ivp_iterator_console_logger(planetary_system, mode=0)
     raise_warning("Please ensure the correct order of the initial state:\n "
@@ -2360,17 +2599,20 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
         lower_lim_out = lower_lim_planet * AU
     upper_lim_out = upper_lim_planet * AU
 
-    print("Planet inner vs outer lims in AU: ", lower_lim_out/AU, upper_lim_out/AU)
-
+    if analyze_iter:
+        if specific_counter is None:
+            raise ValueError("Specific counter is required for analyze_iter=True")
+        outer_spec_counter = specific_counter[0]
+        middle_spec_counter = specific_counter[1]
+        inner_spec_counter = specific_counter[2]
     # Note: During this loop, the semi-major-axes and spin-frequencies of all updates are updated dynamically.
-    # Do not reference 'submoon.a' with the expectation to access the value that was assigned by
-    # 'create_submoon_system'.
-    # Exception: After each simulation, i.e., the end of 'solve_ivp', all values are reset to the values assigned by
-    # 'create_submoon_system'.
     outer_counter = 0
     physical_outer_range = np.linspace(lower_lim_out, upper_lim_out, n_pix_planet)
     for i in physical_outer_range:
         outer_counter += 1
+        if analyze_iter:
+            if outer_counter != outer_spec_counter:
+                continue
 
         # Inject the variable to actually vary (planet's semi-major-axis)
         # The values of y_init stay constant throughout all simulations, except the quantity that is varied.
@@ -2387,8 +2629,11 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
         physical_middle_range = np.linspace(lower_lim_middle, upper_lim_middle, n_pix_moon)
         for j in physical_middle_range:
             middle_counter += 1
+            if analyze_iter:
+                if middle_counter != middle_spec_counter:
+                    continue
 
-            # Inject the variable to actually vary (moon's semi-major-axis)
+                    # Inject the variable to actually vary (moon's semi-major-axis)
             # The values of y_init stay constant throughout all simulations, except the quantity that is varied.
             y_init[1] = j
 
@@ -2403,6 +2648,12 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
             physical_inner_range = np.linspace(lower_lim_in, upper_lim_in, n_pix_submoon)
             for k in physical_inner_range:
                 inner_counter += 1
+                identifier = (outer_counter, middle_counter, inner_counter)
+
+                if analyze_iter:
+                    if inner_counter != inner_spec_counter:
+                        continue
+
                 tracker.iter_counter = (outer_counter, middle_counter, inner_counter)  # For debugging
 
                 # Inject the second variable to vary (submoon's semi-major-axis)
@@ -2419,6 +2670,27 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                 try:
                     sanity_check_initial_values(a_sm_0=y_init[0], a_m_0=y_init[1], a_p_0=y_init[2],
                                                 planetary_system=planetary_system)
+
+                except BarycentreEarlyOutsideOfMassiveBodyPlanet as er:
+                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
+                                      "The planet's barycenter dipped outside of its radius a priori",
+                                      None, tracker.get_sign_changes()])  # See docstring for explanation
+                    premature_termination_logger(er)
+                    termination_reason_counter["The planet's barycenter dipped outside of its radius a priori"] += 1
+                    interesting_runs["The planet's barycenter dipped outside of its radius a priori"].extend([identifier])
+                    results.append("-1")
+                    continue  # Continue to the next j iteration
+
+                except BarycentreEarlyOutsideOfMassiveBodyMoon as er:
+                    lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
+                                      "The moon's barycenter dipped outside of its radius a priori",
+                                      None, tracker.get_sign_changes()])  # See docstring for explanation
+                    premature_termination_logger(er)
+                    termination_reason_counter["The moon's barycenter dipped outside of its radius a priori"] += 1
+                    interesting_runs["The moon's barycenter dipped outside of its radius a priori"].extend([identifier])
+                    results.append("-1")
+                    continue  # Continue to the next j iteration
+
                 except InitialValuesOutsideOfLimits as er:
                     lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
                                       "Some initial value was under the roche or over the a_crit limit",
@@ -2427,6 +2699,7 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                     termination_reason_counter["Some initial value was under the roche or over the a_crit limit"] += 1
                     results.append("-1")
                     continue  # Continue to the next j iteration
+
                 except RocheLimitGreaterThanCriticalSemiMajor as er:
                     lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
                                       "Some roche limit was greater than a_crit",
@@ -2450,9 +2723,11 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
                 # define events to track and values to update and a list describing the events
                 list_of_all_events = [update_values, track_sm_m_axis_1, track_sm_m_axis_2,
-                                      track_m_p_axis_1, track_m_p_axis_2, check_if_stiff]
+                                      track_m_p_axis_1, track_m_p_axis_2, check_if_stiff,
+                                      check_barycentre_moon, check_barycentre_submoon]
                 keys = ["Values were updated.", "Submoon fell under roche limit", "Submoon exceeded a_crit",
-                        "Moon fell under roche limit", "Moon exceeded a_crit", "Iteration is likely to be stiff"]
+                        "Moon fell under roche limit", "Moon exceeded a_crit", "Iteration is likely to be stiff",
+                        "The barycenter of the planet dipped outside its radius", "The barycenter of the moon dipped outside its radius"]
 
                 # evolve to 4.5 Bn. years
                 final_time = turn_billion_years_into_seconds(4.5)
@@ -2481,17 +2756,28 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
                 # If termination event occurred, find termination reason
                 termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
+                if termination_reason == "The barycenter of the planet dipped outside its radius":
+                    stop
+                termination_reason_old = termination_reason
+
+                # Manual override to force tanh iteration for each iteration (pickle objects called "Gamma")
+                if force_tanh_approx:
+                    termination_reason = "Iteration is likely to be stiff"
 
                 if termination_reason == "Iteration is likely to be stiff":
                     analytical_check_possibly_applicable = False
                     print("\t\tIteration is likely to be stiff, rerunning with hyperbolic tangent approximation.")
                     # Rename old values
-                    time_points_old, y_final_old, sol_old, t_events_old, status_old, message_old, success_old, sol_object_old = \
+                    (time_points_old, y_final_old, sol_old, t_events_old, status_old, message_old, success_old,
+                     sol_object_old) = \
                         (time_points, y_final, sol, t_events, status, message, success, sol_object)
                     arguments = (planetary_system, mu_m_sm, mu_p_m, mu_s_p)
 
-                    # explicitly removing `check if stiff ` event (going to :-1 in `list_of_all_events` in the line
-                    # below)
+                    # Clear tracker
+                    tracker.clear()
+
+                    # `check if stiff` event can be explicitly removed if desired for debugging purposes
+                    # (going to :-1 in `list_of_all_events` in the line below)
                     sol_object = rerun_with_approximation(final_time, y_init, arguments, list_of_all_events,
                                                           celestial_time)
 
@@ -2501,25 +2787,61 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                     old_state = (time_points_old, sol_old, submoon_system_derivative)
                     termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
                     if termination_reason == "Iteration is likely to be stiff":
-                        # NOTE: STIFFNESS DETECTION WAS REMOVED IN RERUN 
-                        print("\t\tRerun with hyperbolic approximation ended up stiff as well. Plotting.")
-                        print("Data object: ", y_final, time_points)
-                        plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
+                        # NOTE: Check whether stiffness detection was removed in the rerun.
+                        print("\t\tRerun with hyperbolic approximation ended up stiff as well. Plotting disabled.")
+                        # plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
+
                     try:
                         check_quality_of_approximation(sol, sol_old)
                     except ValueError:
-                        print("\t\tRerun with hyperbolic approximation ended deviated too much from stiff solution. Plotting.")
+
+                        enable_plot = False
+                        if enable_plot:
+                            mode = "enabled"
+                        else:
+                            mode = "disabled"
+
+                        print("\t\tRerun with hyperbolic approximation ended deviating too much from stiff solution. "
+                              f"Plotting {mode}.")
                         # Plot if necessary comparison of old (exact) and new solution (approximation)
-                        plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
+
+                        if enable_plot:
+                            if not analyze_iter:
+                                # Else will get plotted twice
+                                plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
+
+                        if analyze_iter:
+                            print("`analyze_iter` has been set and tanh approximation kicked in. Plotting np.sign (purple)\n "
+                                  "and np.tanh solutions (multicolor), before reverting back to old solution object.")
+                            plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
+
                         # Approximation not good enough => revert back to stiff solution object
                         time_points, sol, t_events, status, message, success, y_final, sol_object = \
                             (time_points_old, sol_old, t_events_old, status_old, message_old, success_old, y_final_old, sol_object_old)
                         termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
+                        print( "\t\t! Reverting back to old solution object (without tanh approximation). !")
 
-                identifier = (outer_counter, middle_counter, inner_counter)
+                        interesting_runs["tanh() model deviated early on from signum() model: "].extend([identifier])
+
+                    if analyze_iter:
+                        # Even if solution passed quality inspection, plot tanh - sgn evolutions
+                        print("\tPlotting sgn-tanh general comparison.")
+                        plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
+
+
+
+
                 control_counter = (None, None, None)
-                construct_debug_plot(debug=debug_plot, idc=identifier, cc=control_counter, plot_dt_systematics=True,
-                                     rest=(time_points, sol, sol_object, y_init, planetary_system, list_of_std_mus))
+                if analyze_iter and termination_reason != "Iteration is likely to be stiff":
+                    # If termination reason was stiff, plot has already been constructed
+                    control_counter = specific_counter
+                    construct_debug_plot(debug=debug_plot, idc=identifier, cc=control_counter, plot_dt_systematics=True,
+                                         rest=(time_points, sol, sol_object, y_init, planetary_system, list_of_std_mus),
+                                         plot_derivatives=False)
+
+
+                if interesting_sign_flip_occured():
+                    interesting_runs["Sign flip in any quantity without being stiff: "].extend([identifier])
 
                 # Numerical solution sanity-check I
                 sanity_check_tot_ang_momentum_evolution(mu_m_sm=mu_m_sm, mu_p_m=mu_p_m, mu_s_p=mu_s_p,
@@ -2536,9 +2858,12 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                 document_result(status=status, termination_reason=termination_reason, time_points=time_points,
                                 results=results, i=outer_counter, j=middle_counter, k=inner_counter, y_init=y_init,
                                 y_final=y_final, termination_reason_counter=termination_reason_counter,
-                                lifetimes=lifetimes, whole_solution_object=sol_object)
+                                lifetimes=lifetimes, whole_solution_object=sol_object,
+                                interesting_events_dict=interesting_runs)
 
     consistency_check_volume(expected_volume=n_pix_planet * n_pix_moon * n_pix_submoon, actual_volume=len(lifetimes))
+
+
 
     # The values of the physical axes that have been grid searched
     physically_varied_ranges = [physical_outer_range, physical_middle_range, physical_inner_range]
@@ -2550,12 +2875,13 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
     # Return object
     data = (results, termination_reason_counter, lifetimes, physically_varied_ranges, computation_time)
 
-    now = datetime.datetime.now()
-    pickle_me_this(
-        f'data_storage/integration_{now}', data)
+    if not analyze_iter:
+        now = datetime.datetime.now()
+        pickle_me_this(
+            f'data_storage/{case_prefix}_integration_{now}', data)
 
-    save_metadata(now, (n_pix_planet, n_pix_moon, n_pix_submoon), physically_varied_ranges,
-                  y_init[-3:], planetary_system, further_notes)
+        save_metadata(now, case_prefix,(n_pix_planet, n_pix_moon, n_pix_submoon), physically_varied_ranges,
+                      y_init[-3:], planetary_system, interesting_runs, further_notes)
 
     return data
 
