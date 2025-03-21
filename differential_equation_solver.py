@@ -55,11 +55,11 @@ else:
 
 
 # Construct the base system, don't forget to change the `case_prefix` variable!
-star, planet, moon, submoon = create_earth_submoon_system(P_rot_star_DAYS=star_rot_period_days,
+star, planet, moon, submoon = create_warm_jupiter_submoon_system(P_rot_star_DAYS=star_rot_period_days,
                                                           P_rot_planet_HOURS=planet_rot_period_hours,
                                                           P_rot_moon_HOURS=moon_rot_period_hours)
-case_prefix = "earth_like"
-# case_prefix = "warm_jupiter_like"
+# case_prefix = "earth_like"
+case_prefix = "warm_jupiter_like"
 
 # Get standard gravitational
 # parameters to input into the differential equations
@@ -84,7 +84,7 @@ result = solve_ivp_iterator(n_pix_planet=n_pix_planet, n_pix_moon=n_pix_moon, n_
                             y_init=y_init, planetary_system=[star, planet, moon, submoon], debug_plot=True,
                             list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p], upper_lim_planet=30, lower_lim_planet=None,
                             case_prefix=case_prefix, further_notes=case+case_descr,
-                            analyze_iter=False, specific_counter=(7, 8, 3), force_tanh_approx=False)
+                            analyze_iter=False, specific_counter=(2, 4, 8), force_tanh_approx=False)
 
-showcase_results(result, suppress_text=False, plot_initial_states=True, plot_final_states=True,
-                  save=False, filename=case)
+# showcase_results(result, suppress_text=False, plot_initial_states=True, plot_final_states=True,
+#                   save=False, filename=case)
