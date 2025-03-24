@@ -11,42 +11,43 @@ CASE_D = False  # The planet spins slower than the moon, which spins slower than
 CASE_E = False  # The moon spins slower than the star, which spins slower than the planet.
 CASE_F = False  # The moon spins slower than the planet, which spins slower than the star.
 
-name_case = [["Case A", "(star spins slower than the planet, which spins slower than the moon)"],
-             ["Case B", "(star spins slower than the moon, which spins slower than the planet)"],
-             ["Case C", "(planet spins slower than the star, which spins slower than the moon)"],
-             ["Case D", "(planet spins slower than the moon, which spins slower than the star)"],
-             ["Case E", "(moon spins slower than the star, which spins slower than the planet)"],
-             ["Case F", "(moon spins slower than the planet, which spins slower than the star)"]]
 all_cases = np.array([CASE_A, CASE_B, CASE_C, CASE_D, CASE_E, CASE_F])
-print(all_cases)
-which_true = np.where(all_cases == True)
+
+name_case = [["Case_A", " (star spins slower than the planet, which spins slower than the moon)"],
+             ["Case_B", " (star spins slower than the moon, which spins slower than the planet)"],
+             ["Case_C", " (planet spins slower than the star, which spins slower than the moon)"],
+             ["Case_D", " (planet spins slower than the moon, which spins slower than the star)"],
+             ["Case_E", " (moon spins slower than the star, which spins slower than the planet)"],
+             ["Case_F", " (moon spins slower than the planet, which spins slower than the star)"]]
+
+which_true = np.where(all_cases == True)[0]
 if len(which_true) > 1:
     raise ValueError("Choose one.")
-print(which_true)
-case = name_case[which_true[0][0]][0]
-case_descr = name_case[which_true[0][0]][1]
 
-if case == "Case A":
+case = name_case[which_true[0]][0]
+case_descr = name_case[which_true[0]][1]
+
+if case == "Case_A":
     star_rot_period_days = 20
     planet_rot_period_hours = 50
     moon_rot_period_hours = 24
-elif case == "Case B":
+elif case == "Case_B":
     star_rot_period_days = 20
     planet_rot_period_hours = 24
     moon_rot_period_hours = 10 * 24  # 10 days
-elif case == "Case C":
+elif case == "Case_C":
     star_rot_period_days = 20
     planet_rot_period_hours = 50 * 24  # 50 days
     moon_rot_period_hours = 10 * 24  # 10 days
-elif case == "Case D":
+elif case == "Case_D":
     star_rot_period_days = 20
     planet_rot_period_hours = 50 * 24  # 50 days
     moon_rot_period_hours = 40 * 24  # 40 days
-elif case == "Case E":
+elif case == "Case_E":
     star_rot_period_days = 20
     planet_rot_period_hours = 10
     moon_rot_period_hours = 50 * 24  # 50 days
-elif case == "Case F":
+elif case == "Case_F":
     star_rot_period_days = 5
     planet_rot_period_hours = 10*24  # 10 days
     moon_rot_period_hours = 30*24  # 30 days
@@ -78,13 +79,13 @@ n_pix_planet = 10
 n_pix_moon = 10
 n_pix_submoon = 10
 
-
 # Set the resolution, i.e., how many simulations to do and other parameters of the simulation
 result = solve_ivp_iterator(n_pix_planet=n_pix_planet, n_pix_moon=n_pix_moon, n_pix_submoon=n_pix_submoon,
-                            y_init=y_init, planetary_system=[star, planet, moon, submoon], debug_plot=True,
-                            list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p], upper_lim_planet=30, lower_lim_planet=None,
+                            y_init=y_init, planetary_system=[star, planet, moon, submoon], debug_plot=False,
+                            list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p], upper_lim_planet=5, lower_lim_planet=None,
                             case_prefix=case_prefix, further_notes=case+case_descr,
-                            analyze_iter=False, specific_counter=(2, 4, 8), force_tanh_approx=False)
-
+                            analyze_iter=False, specific_counter=None, force_tanh_approx=False, unequal_support=False)
+#
+#
 # showcase_results(result, suppress_text=False, plot_initial_states=True, plot_final_states=True,
 #                   save=False, filename=case)

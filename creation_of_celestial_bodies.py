@@ -64,11 +64,6 @@ def create_earth_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_
     This means, that any calculations done that grab the stars k2-value or Q-value are wrong.
     (We don't do such calculations).
 
-    UPDATE 23.10.24: Actually, I now set the submoon mass to 100.000 x the test mass in Kollmeier and Raymond
-    because a small submoon test mass gives raise to a lot of skipped iterations due to detected stiffness, whereas
-    if the submoon is massive, a lot of those points definitely reach an unstable point before getting into
-    small scale oscillations.
-
     visualize_with_plot: bool,      Used to plot an overview of the constructed system
     P_rot_star_DAYS: float,         The rotation period of the star in days.
     P_rot_planet_HOURS: float,      The rotation period of the planet in hours.
@@ -113,11 +108,10 @@ def create_earth_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_
                          quality_factor=100, descriptive_index="m", name="moon",
                          hierarchy_number=3, hosting_body=earth)
 
-    # submoon_mass = submoon_d.m/2.1/20
+    # submoon_mass = 0.01 * luna_d.m  # 1% of the lunar mass
+    submoon_mass = 0.1 * luna_d.m  # 10% of the lunar mass
     # submoon_mass = 4.2e15  # this is the test mass used by Kollmeier & Raymond
-    submoon_mass =  luna_d.m * 1/10  # 1/10th of moon mass
-    # submoon_mass = 1e-200
-    # submoon_mass = 1/3 * 6.39e23  # A third of mars' mass!
+
     submoon = CelestialBody(mass=submoon_mass, density=submoon_d.rho, semi_major_axis=submoon_d.a,
                             spin_frequency=spin_frequency_submoon, love_number=0.25,
                             quality_factor=100, descriptive_index="sm", name="submoon",

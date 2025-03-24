@@ -11,6 +11,9 @@ from style_components.voxel_plotter import plot_3d_voxels_initial_states, plot_3
 from matplotlib.ticker import FuncFormatter
 import datetime
 import time
+from mpl_toolkits.axes_grid1.inset_locator import zoomed_inset_axes, mark_inset
+from scipy.interpolate import interp1d
+import matplotlib.patches as patches
 
 # Delete and import instead from style_components
 """plt.style.use("dark_background")
@@ -133,10 +136,6 @@ class Tracker:
         """
         res = [calculate_sign_changes(arr) for arr in [self.signs_sm, self.signs_m, self.signs_p]]
         return res
-
-
-# Initialize global tracker object
-tracker = Tracker()
 
 
 def check_if_direct_orbits(hosting_body: 'CelestialBody', hosted_body: 'CelestialBody'):
@@ -739,7 +738,7 @@ def bind_system_gravitationally(planetary_system: List['CelestialBody'], use_ini
     hn_list = [body.hn for body in planetary_system]
 
     # Perform mass and distance ratios check
-    m_ratio = .1  # In order to not violate mathematical assumptions
+    m_ratio = .25  # In order to not violate mathematical assumptions
     a_ratio = .3
     for index, hn in enumerate(hn_list):
         if hn == 1:
@@ -928,7 +927,7 @@ def state_vector_plot(time_points, solution, derivative, planetary_system, list_
         plt.close(fig)
 
 
-def c_sign(expr, t=False, k=1e7):
+def c_sign(expr, t=False, k=1e6):
     # Custom sign function, if t=True, np.sign gets replaced by hyperbolic tangent approximation of `expr`
     if t:
         return np.tanh(k*expr)
@@ -1119,18 +1118,20 @@ def check_if_stiff(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_
     debug_arr = [False, False, False, False, False, False, False]  # index 3 possible ill
     eta_coeffs = [stiffness_coefficient(derivative_evol, sl=5, debug=debug) for derivative_evol,
                   debug in zip(dy_dt_evolutions, debug_arr)]
+
     # print("Eta coefficients (a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s): ", eta_coeffs)
     eta = np.max(eta_coeffs)
     tracker.add_eta(eta)
     threshhold = 0.7
+    # threshhold = np.inf  # in case non-trigger is wished
     # threshhold = 0.843
     # if eta > threshhold - 0.4:
-    if tracker.iter_counter == (2,4,8):
-        print("\t\t\tCurrent eta: ", eta, " at time point ", t/(3600 * 24 * 365 * 1e9), " Gyrs.")
+    # if tracker.iter_counter == (2,4,8):
+    # print("\t\t\tCurrent eta: ", eta, " at time point ", t/(3600 * 24 * 365 * 1e9), " Gyrs.")
     # threshhold = 0.65  # for testing purposes. Or maybe even keep this
     # threshhold = 0.4  # for testing purposes. Or maybe even keep this
 
-    control_plot = True
+    control_plot = False
     if control_plot and tracker.eta_chain[current_step_index] > threshhold and tracker.iter_counter == (3,4,7):
         time = tracker.t
         vals = tracker.y[:, 3]
@@ -1163,6 +1164,9 @@ def stiffness_coefficient(arr, sl=5, tolerance_percent=68, debug=False):
     array average out on small scales => Small scale oscillations.
     """
     subarray_length = sl
+    if subarray_length < 5:
+        raise ValueError("Each subarray must be at least length 5.")
+
     arr = np.array(arr)
     total_length = len(arr)
     how_much_larger = 10  # we want the array to be ten times larger than the sub_array a length for a proper inference
@@ -1172,9 +1176,6 @@ def stiffness_coefficient(arr, sl=5, tolerance_percent=68, debug=False):
         # triggered (triggered at 0.8)
         return 0.01
         # raise ValueError("Subarray length must be positive and less than or equal to the length of the array.")
-
-    if subarray_length < 5:
-        raise ValueError("Each subarray must be at least length 5.")
 
     # continue, but cut-off the first (how_much_larger*subarray_length) values to only include the potentially
     # oscillating regime
@@ -1238,6 +1239,32 @@ def calculate_sign_changes(arr):
     return np.sum(sign_changes != 0)
 
 
+def update_values_quick(t, y, planetary_system: List['CelestialBody']):
+    """
+    A copy of `update_values` that does not make edits to the global evolution tracker object.
+    When roots of events are calculated, the event functions are called again with varying time steps to determine
+    when a sign change happens in a small interval.
+
+    In these cases, `update_values` has not been called before, so Hill-Radii etc. will not have been updated.
+    So, put this function at the start of all events. You would still want the other function to update the
+    tracker object, although all other functionality of `update_values` is made redundant by this
+    `update_values_quick` function.
+    :return:
+    """
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+
+    # Unpack the celestial bodies of the system to access their pre-defined properties
+    star, planet, moon, submoon = planetary_system
+
+    star.update_spin_frequency_omega(omega_s)
+    planet.update_spin_frequency_omega(omega_p)
+    moon.update_spin_frequency_omega(omega_p)
+
+    planet.update_semi_major_axis_a(a_s_p)
+    moon.update_semi_major_axis_a(a_p_m)
+    submoon.update_semi_major_axis_a(a_m_sm)
+
+
 def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
     """
     Note
@@ -1247,6 +1274,7 @@ def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m
     Check if the Roche-Limit or Hill-Radius of the bodies is trespassed based on the updated semi-major-axis values.
     If yes, terminate the program (terminal attribute set to True).
     """
+    # print("Current time step: ", turn_seconds_to_years(t, "Billions"), "Billions of years", " or in secs: ", t)
     # track and update all relevant values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
 
@@ -1273,8 +1301,26 @@ def update_values(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m
     return omega_s - np.inf
 
 
+def track_p_s_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
+    # Track: Will the planet fall under its roche limit?
+    # The planet cannot escape the star because there isn't a Hill-Radius for the star since the star has no
+    # hosting body
+
+    update_values_quick(t, y, planetary_system)
+
+    # Unpack all values
+    a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
+    # List unpack the celestial bodies of the system to access their pre-defined properties
+    star, planet, moon, submoon = planetary_system
+    rl = planet.get_current_roche_limit()
+    return a_s_p - rl
+
+
 def track_sm_m_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
     # Track: Will the submoon fall under the moon's roche limit?
+
+    update_values_quick(t, y, planetary_system)
+
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
     # List unpack the celestial bodies of the system to access their pre-defined properties
@@ -1286,8 +1332,10 @@ def track_sm_m_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu
     return a_m_sm - rl
 
 def track_sm_m_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
-
     # Track: Will the submoon escape the moon's influence?
+
+    update_values_quick(t, y, planetary_system)
+
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
     # List unpack the celestial bodies of the system to access their pre-defined properties
@@ -1301,6 +1349,9 @@ def track_sm_m_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu
 
 def track_m_p_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
     # Track: Will the moon fall under the planet's roche limit?
+
+    update_values_quick(t, y, planetary_system)
+
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
     # List unpack the celestial bodies of the system to access their pre-defined properties
@@ -1313,6 +1364,9 @@ def track_m_p_axis_1(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_
 
 def track_m_p_axis_2(t, y, planetary_system: List['CelestialBody'], mu_m_sm, mu_p_m, mu_s_p):
     # Track: Will the moon escape the planet's influence?
+
+    update_values_quick(t, y, planetary_system)
+
     # Unpack all values
     a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = y
     # List unpack the celestial bodies of the system to access their pre-defined properties
@@ -1503,6 +1557,192 @@ def plt_results(sol_object, planetary_system, list_of_mus, print_sol_object=Fals
                       save=save, plot_derivatives=plot_derivatives, old_state=old_state)
 
 
+def special_plot_I():
+    """
+    The goal of this 1-panel-plot is to show that the tanh(k()) model is a better and better fit to the sgn() model for
+    larger and larger k parameters. Although k=1e6 does not exactly overlay the sgn() curve, it is good enough.
+
+    """
+    data_sgn_model = np.loadtxt("data_storage/arrays/run_583_sgn_model_a_sm_normed.txt")
+    t_sgn, y_sgn = data_sgn_model
+
+    data_tanh_model_1 = np.loadtxt("data_storage/arrays/run_583_tanh_model_a_sm_normed_k_1e6.txt")
+    t_tanh_1, y_tanh_1 = data_tanh_model_1
+    data_tanh_model_2 = np.loadtxt("data_storage/arrays/run_583_tanh_model_a_sm_normed_k_1e7.txt")
+    t_tanh_2, y_tanh_2 = data_tanh_model_2
+    data_tanh_model_3 = np.loadtxt("data_storage/arrays/run_583_tanh_model_a_sm_normed_k_1e5.5.txt")
+    t_tanh_3, y_tanh_3 = data_tanh_model_3
+
+    t_list = [t_sgn, t_tanh_1, t_tanh_2, t_tanh_3]
+    y_list = [y_sgn, y_tanh_1, y_tanh_2, y_tanh_3]
+    alpha_vals = [1, 0.6, 1, 0.4]  # first element is the sgn
+
+    txt_pos_1 = (3.7, 7)  # k = 1e7
+    txt_pos_2 = (5, 6.3)    # k = 1e6
+    txt_pos_3 = (10.5, 6.2)    # k = 1e5.5
+
+    plt.text(txt_pos_1[0], txt_pos_1[1], r"$k=10^7$", fontsize=20, horizontalalignment='center')
+    plt.text(txt_pos_2[0], txt_pos_2[1], r"$k=10^6$", fontsize=20, horizontalalignment='center')
+    plt.text(txt_pos_3[0], txt_pos_3[1], r"$k=10^{5.5}$", fontsize=20, horizontalalignment='center')
+
+    for idx, data in enumerate(zip(t_list, y_list)):
+        t, y = data
+        t = turn_seconds_to_years(t, "Millions")
+        if idx == 0:
+            plt.plot(t, y, marker="x", lw=0, color="black", label=r"$\mathrm{sgn}(\cdot)$ model")
+        elif idx == 2:
+            plt.plot(t, y, ls="--", lw=2, color="black", markersize=0, label=r"$\mathrm{tanh}(k(\cdot))$ model", alpha=alpha_vals[idx])
+        else:
+            plt.plot(t, y, ls="--", lw=2, color="black", markersize=0, alpha=alpha_vals[idx])
+
+    plt.xlim(-0.3,12)
+    plt.ylim(5,17)
+    plt.xlabel(r"$t$ $\mathrm{[Myr]}$ ")
+    plt.ylabel(r"$a_{\mathrm{sm}}$ $\mathrm{[R_p]}$")
+    plt.legend(loc="upper right", frameon=False)
+
+
+    plt.tight_layout()
+    plt.savefig("data_storage/figures/special_plot_I")
+    plt.show()
+
+
+def special_plot_II():
+    """
+    In this plot, we show a particular ill-example as far as discrepancy between the sgn() and the tanh(k()) model
+    goes. The shapes considerably deviate from each other, but the end-states are still within 3% of each other!
+    So it does not really matter for our analysis since we're only interested in the end states.
+    :return:
+    """
+    data_sgn_model = np.loadtxt("data_storage/arrays/run_759_sgn_model_omega_m_normed.txt")
+    t_sgn, y_sgn = data_sgn_model
+
+    def interpolate_and_sample(arr, num_points):
+        x = np.linspace(0, len(arr) - 1, len(arr))  # Original indices
+        interp_func = interp1d(x, arr, kind='cubic')  # Cubic spline interpolation
+
+        new_x = np.linspace(0, len(arr) - 1, num_points)  # Equidistant points
+        sampled_values = interp_func(new_x)  # Get interpolated values
+
+        return sampled_values
+
+    def moving_average(arr, window_size=3):
+        # smooth out small steps in the solution for visual purposes
+        return np.convolve(arr, np.ones(window_size) / window_size, mode='valid')
+
+    t_sgn = interpolate_and_sample(t_sgn, 50)  # remove every second to thin out
+    y_sgn = interpolate_and_sample(y_sgn, 50)  # remove every second to thin out
+
+    data_tanh_model_1 = np.loadtxt("data_storage/arrays/run_759_tanh_model_omega_m_normed_k_1e6.txt")
+    t_tanh1, y_tanh1 = data_tanh_model_1
+    data_tanh_model_2 = np.loadtxt("data_storage/arrays/run_759_tanh_model_omega_m_normed_k_1e7.txt")
+    t_tanh2, y_tanh2 = data_tanh_model_2
+    data_tanh_model_3 = np.loadtxt("data_storage/arrays/run_759_tanh_model_omega_m_normed_k_1e12.txt")
+    t_tanh3, y_tanh3 = data_tanh_model_3
+    data_tanh_model_4 = np.loadtxt("data_storage/arrays/run_759_tanh_model_omega_m_normed_k_1e13.txt")
+    t_tanh4, y_tanh4 = data_tanh_model_4
+
+    k_list = ["None", "1e6", "1e12", "1e13"]
+    t_list = [t_sgn, t_tanh1, t_tanh3, t_tanh4]
+    y_list = [y_sgn, y_tanh1, y_tanh3, y_tanh4]
+    alpha_vals = [1, 0.6, 0.4, 1]  # first element is the sgn
+
+    for idx, data in enumerate(zip(t_list, y_list)):
+        t, y = data
+        t = turn_seconds_to_years(t, "Billions")
+
+        if idx != 0:
+
+            t = moving_average(t, window_size=500)
+            y = moving_average(y, window_size=500)
+
+        if idx == 0:
+            plt.plot(t, y, marker="x", lw=0, color="black", label=r"$\mathrm{sgn}(\cdot)$ model")
+        elif idx == 3:
+            print("alpha of ", k_list[idx], " is ", alpha_vals[idx])
+            plt.plot(t, y, ls="--", lw=2, color="black", markersize=0, label=r"$\mathrm{tanh}(k(\cdot))$ model", alpha=alpha_vals[idx])
+        else:
+            print("alpha of ", k_list[idx], " is ", alpha_vals[idx])
+            plt.plot(t, y, ls="--", lw=2, color="black", markersize=0, alpha=alpha_vals[idx])
+
+
+    txt_pos_1 = (4.6, 1.6)  # k = 1e6
+    txt_pos_2 = (4.6, 2.7)  # k = 1e12
+    txt_pos_3 = (4.6, 0.3)  # k = 1e13
+
+    plt.text(txt_pos_1[0], txt_pos_1[1], r"$k=10^6$", fontsize=20, horizontalalignment='left')
+    plt.text(txt_pos_2[0], txt_pos_2[1], r"$k=10^{12}$", fontsize=20, horizontalalignment='left')
+    plt.text(txt_pos_3[0], txt_pos_3[1], r"$k=10^{13}$", fontsize=20, horizontalalignment='left')
+
+    plt.xlim(2, 5)
+    plt.ylim(-1.5, 6)
+
+    plt.xlabel(r"$t$ $\mathrm{[Gyr]}$ ")
+    plt.ylabel(r"$\Omega_{\mathrm{m}}$ $\mathrm{[\mu Hz]}$")
+    plt.legend(loc="upper right", frameon=False)
+
+    plt.tight_layout()
+    plt.savefig("data_storage/figures/special_plot_II")
+    plt.show()
+
+
+def special_plot_III():
+    """
+    The goal of this plot that whenever there are 'nicks' in the numerical solutions, the sgn() model struggles and
+    falls into ever-smaller-getting oscillations, while the tanh(k()) model smoothes these edges out.
+    The small oscillations are seen via an inset plot.
+    :return:
+    """
+    data_sgn_model = np.loadtxt("data_storage/arrays/run_783_sgn_model_a_sm_normed_uneven_points.txt")
+    t_sgn, y_sgn = data_sgn_model
+
+    data_tanh_model = np.loadtxt("data_storage/arrays/run_783_tanh_model_a_sm_normed_even_points.txt")
+    t_tanh, y_tanh = data_tanh_model
+
+    t_sgn, t_tanh = turn_seconds_to_years(t_sgn, "Millions"), turn_seconds_to_years(t_tanh, "Millions")
+
+    fig, ax = plt.subplots()
+
+    ax.plot(t_sgn, y_sgn, "x", color="black", label=r"$\mathrm{sgn}(\cdot)$ model", lw=0.5, ls="-")
+    ax.plot(t_tanh, y_tanh, "--", color="black", label=r"$\mathrm{tanh}(k(\cdot))$ model", lw=2)
+
+    ax.set_xlabel(r"$t$ $\mathrm{[Myr]}$ ")
+    ax.set_ylabel(r"$a_{\mathrm{sm}}$ $\mathrm{[R_p]}$")
+
+    ax.legend(loc="lower right", frameon=False)
+    # ax.set_ylim(23.53, 23.8)
+    ax.set_xlim(-0.1, 60)
+
+    # INSET PLOT SHOWING SMALL SCALE OSCILLATIONS
+    left, bottom, width, height = [0.7, 0.4, 0.2, 0.3]
+    ax2 = fig.add_axes([left, bottom, width, height])
+    ax2.plot(t_sgn, y_sgn, "x", color="black", lw=0.5, ls="-")
+    ax2.set_xlim(17.3, 17.65)
+    ax2.set_ylim(23.705, 23.709)
+
+    for spine in ax2.spines.values():
+        spine.set_color("blue")
+
+    # add blue square around small tail to indicate association with inset plot
+    lower_left = (16.75, 23.673)
+    upper_right = (18.49, 23.75)
+
+    # Calculate width and height
+    width = upper_right[0] - lower_left[0]
+    height = upper_right[1] - lower_left[1]
+
+    # Create a blue rectangle (square in this case)
+    rectangle = patches.Rectangle(lower_left, width, height,
+                                  linewidth=1, edgecolor="blue", facecolor="none")
+
+    # Add to plot
+    ax.add_patch(rectangle)
+
+    plt.tight_layout()
+    plt.savefig("data_storage/figures/special_plot_III")
+    plt.show()
+
+
 def find_termination_reason(status, t_events, keys):
     if status == 1:
         term_index = [i for i, array in enumerate(t_events) if bool(len(array))]
@@ -1520,6 +1760,10 @@ def document_result(status, termination_reason, time_points, results, i, j, k,
     stability_status = log_results(status, termination_reason, time_points)  # Prints in terminal
 
     results.append(stability_status)  # Appends to object that is returned at the end of grid search
+
+    # MANUAL OVERRIDE OF SETTINGS
+    # No need to save the whole_solution_object, takes up way too much space and not used in further analysis
+    whole_solution_object = None
 
     lifetimes.append([(i, j, k,), turn_seconds_to_years(np.max(time_points)), y_init, y_final,
                       termination_reason, whole_solution_object, tracker.get_sign_changes()])
@@ -1553,7 +1797,7 @@ def consistency_check_volume(expected_volume, actual_volume):
             f"than necessary.")
 
 
-def print_final_data_object_information(hits, computation_time, termination_reason_counter, lifetimes, norm):
+def print_final_data_object_information(hits, computation_time, termination_reason_counter, lifetimes, norm, old):
     """
 
     :param hits:                        An array that indicates success (+1) or failure (-1) of iteration.
@@ -1561,6 +1805,7 @@ def print_final_data_object_information(hits, computation_time, termination_reas
     :param termination_reason_counter:  A dict containing the termination reasons.
     :param lifetimes:                   The `lifetimes` object returned by the DFE iterative solver.
     :param norm:                        The number of years that are interpreted as stable.
+    :param old:                         Quick fix, delete later on
     :return:
     """
     from collections import defaultdict
@@ -1571,7 +1816,10 @@ def print_final_data_object_information(hits, computation_time, termination_reas
         hit_counts[hit] += 1
 
     lts = np.array([lifetime[1] for lifetime in lifetimes]) / norm
-    stiffs = termination_reason_counter["Iteration is likely to be stiff"]
+    if old:
+        stiffs = termination_reason_counter["Iteration is likely to be stiff"]
+    else:
+        stiffs = termination_reason_counter["sgn() model is likely stiff"]
     quo = np.round(100 * np.count_nonzero(lts == 1) / (len(lts) - stiffs), 2)
 
     print("\n\n--------RESULTS--------\n")
@@ -1588,7 +1836,7 @@ def print_final_data_object_information(hits, computation_time, termination_reas
     print("\n------ Total computation time in minutes: \n", computation_time / 60)
     print("------")
 
-    print("\n------ Histogram of termination reasons:")
+    print("\n------ List of termination reasons:")
     for key, value in termination_reason_counter.items():
         print(f'{key}: {value}')
     print("------")
@@ -1599,7 +1847,8 @@ def print_final_data_object_information(hits, computation_time, termination_reas
     print(lifetimes[index_of_longest_lifetime_array][:5])
 
 
-def showcase_results(data, plot_initial_states=False, suppress_text=True, plot_final_states=True, save=False, filename=None):
+def showcase_results(data, plot_initial_states=False, suppress_text=True, plot_final_states=True, save=False, filename=None,
+                     old = False, earth_like=False):
     """
 
     :param data, array:      The unpickled data returned by the function differential equation solver.
@@ -1632,7 +1881,7 @@ def showcase_results(data, plot_initial_states=False, suppress_text=True, plot_f
     if not suppress_text:
         # Print basic information about grid search
         print_final_data_object_information(hits, computation_time, termination_reason_counter, lifetimes,
-                                            norm=normalization)
+                                            norm=normalization, old=old)
 
     # Get the varied arrays (X, Y, Z) of grid search, physical as well as integers representing the iteration count
     varied_planet_range, varied_moon_range, varied_submoon_range = tuple(
@@ -1642,10 +1891,13 @@ def showcase_results(data, plot_initial_states=False, suppress_text=True, plot_f
     # Sanity-check grid search volume
     consistency_check_volume(expected_volume=n_pix_planet * n_pix_moon * n_pix_submoon, actual_volume=len(lifetimes))
 
-    solved_coordinates = np.array([lifetime[0] for lifetime in lifetimes if
-                                   lifetime[4] != "Iteration is likely to be stiff"])
-    unsolved_coordinates = np.array([lifetime[0] for lifetime in lifetimes if
-                                     lifetime[4] == "Iteration is likely to be stiff"])
+    if old:
+        solved_coordinates = np.array([lifetime[0] for lifetime in lifetimes if lifetime[4] != "Iteration is likely to be stiff"])
+        unsolved_coordinates = np.array([lifetime[0] for lifetime in lifetimes if lifetime[4] == "Iteration is likely to be stiff"])
+    else:
+        solved_coordinates = np.array([lifetime[0] for lifetime in lifetimes if lifetime[4] != "sgn() model is likely stiff"])
+        unsolved_coordinates = np.array([lifetime[0] for lifetime in lifetimes if lifetime[4] == "sgn() model is likely stiff"])
+
     # `lifetime[0]` is iteration counter (i, j, k,) (proxies for actual physical values).
     # I.e. `coordinates` is now a nx3 matrix where each row represents a
     # coordinate point: [[ 1  1  1], [ 1  1  2], [ 1  1  3] ... ].
@@ -1663,23 +1915,58 @@ def showcase_results(data, plot_initial_states=False, suppress_text=True, plot_f
     Y_unsolved = [coordinate_triple[1] for coordinate_triple in unsolved_coordinates]
     Z_unsolved = [coordinate_triple[2] for coordinate_triple in unsolved_coordinates]
 
+
+    earth_like_system_planet_radius = 6370e3
+    epr = earth_like_system_planet_radius  # earth-earth radius
+    earth_like_system_moon_radius = 1737e3
+    emr = earth_like_system_moon_radius  # earth-moon radius
+    warm_jup_like_system_planet_radius = 11*epr
+    wjpr = warm_jup_like_system_planet_radius
+    warm_jup_like_system_moon_radius = 4*epr
+    wjmr = warm_jup_like_system_moon_radius
+
+    raise_warning("Adjust norm on x,y,z axis dependent on earth or warm jupiter like system!")
+
+    if earth_like:
+        print("Norming with earth like norm")
+        system = "earth_like"
+    else:
+        print("Norming with warm jupiter like norm")
+        system = "warm_jupiter_like"
+
+    if system == "earth_like":
+        pr = epr
+        mr = emr
+    else:
+        pr = wjpr
+        mr = wjmr
+
     X_solved = np.array([varied_planet_range[coordinate_proxy - 1] for coordinate_proxy in X_solved]) / AU
     # Planet semi-major-axis physical in AU
-    Y_solved = np.array([varied_moon_range[coordinate_proxy - 1] for coordinate_proxy in Y_solved]) / LU  # Moon -""-
+    Y_solved = np.array([varied_moon_range[coordinate_proxy - 1] for coordinate_proxy in Y_solved]) / pr  # Moon -""-
     # in earth-moon distances
-    Z_solved = np.array([varied_submoon_range[coordinate_proxy - 1] for coordinate_proxy in Z_solved]) / SLU  # Submoon
+    Z_solved = np.array([varied_submoon_range[coordinate_proxy - 1] for coordinate_proxy in Z_solved]) / mr  # Submoon
     # -""- in twentieths of earth-moon distance
 
+
+
     X_unsolved = np.array([varied_planet_range[coordinate_proxy - 1] for coordinate_proxy in X_unsolved]) / AU
-    Y_unsolved = np.array([varied_moon_range[coordinate_proxy - 1] for coordinate_proxy in Y_unsolved]) / LU
-    Z_unsolved = np.array([varied_submoon_range[coordinate_proxy - 1] for coordinate_proxy in Z_unsolved]) / SLU
+    Y_unsolved = np.array([varied_moon_range[coordinate_proxy - 1] for coordinate_proxy in Y_unsolved]) / pr  # planet radii
+    Z_unsolved = np.array([varied_submoon_range[coordinate_proxy - 1] for coordinate_proxy in Z_unsolved]) / mr  # moon radii
 
-    values_solved = np.array([lifetime[1] for lifetime in lifetimes
-                              if lifetime[4] != "Iteration is likely to be stiff"]) / normalization
+    if old:
+        values_solved = np.array([lifetime[1] for lifetime in lifetimes
+                                  if lifetime[4] != "Iteration is likely to be stiff"]) / normalization
 
-    values_unsolved = np.array([lifetime[1] for lifetime in lifetimes
-                                if lifetime[4] == "Iteration is likely to be stiff"]) / normalization
-    # a number between 0 and 1, if 1, equates to a point in phase space that has a stable lifetime of `normalization`
+        values_unsolved = np.array([lifetime[1] for lifetime in lifetimes
+                                    if lifetime[4] == "Iteration is likely to be stiff"]) / normalization
+    else:
+        values_solved = np.array([lifetime[1] for lifetime in lifetimes
+                                  if lifetime[4] != "sgn() model is likely stiff"]) / normalization
+
+        values_unsolved = np.array([lifetime[1] for lifetime in lifetimes
+                                    if lifetime[4] == "sgn() model is likely stiff"]) / normalization
+        # a number between 0 and 1, if 1, equates to a point in phase space that has a stable lifetime of `normalization`
     # years.
 
     # Now, finally, get the distribution of final states. These here also include the end states of stiff equations.
@@ -1699,8 +1986,8 @@ def showcase_results(data, plot_initial_states=False, suppress_text=True, plot_f
             values_solved_f.append(lt[1]/normalization)
 
     X_solved_f = np.array(X_solved_f) / AU
-    Y_solved_f = np.array(Y_solved_f) / LU
-    Z_solved_f = np.array(Z_solved_f) / SLU
+    Y_solved_f = np.array(Y_solved_f) / pr
+    Z_solved_f = np.array(Z_solved_f) / mr
 
     # A small snippet to export data to embed onto my personal webpage using chartJS.
     # Do not necessarily delete
@@ -1724,9 +2011,11 @@ def showcase_results(data, plot_initial_states=False, suppress_text=True, plot_f
 
     plot_3d_voxels_initial_states(data_solved=[X_solved, Y_solved, Z_solved, values_solved],
                                   data_unsolved=[X_unsolved, Y_unsolved, Z_unsolved, values_unsolved],
-                                  save=save, filename=f"initial_states_{filename}", plot=plot_initial_states)
+                                  save=save, filename=f"initial_states_{filename}", plot=plot_initial_states,
+                                  system=system)
     plot_3d_voxels_final_states(data=[X_solved_f, Y_solved_f, Z_solved_f, values_solved_f],
-                                save=save, filename=f"end_states_{filename}", plot=plot_final_states)
+                                save=save, filename=f"end_states_{filename}", plot=plot_final_states,
+                                system=system)
 
 
 def jacobian(t, y, *args):
@@ -1970,14 +2259,6 @@ def calculate_relative_neighboring_diffs(arr):
     return np.diff(arr) / arr[:-1]
 
 
-# Global testing variables. Here i am trying to see whether the delta_t's in `handle_diverged_solution` grow with
-# total time or not.
-# If they do, this is a hint of some kind of systematic, which I should further think about.
-t_arr_final = []  # the numeric final times of different iterations
-delta_t_arr_div = []  # The time differences between the divergences of numeric and analytic solution for each of those iters.
-num_steps_arr = []
-
-
 def handle_diverged_solution(num_sol, ana_sol, time_of_ana_divergence, final_numeric_time, body, num_of_steps=None):
     """
     Checks whether or not the numeric and analytic solution have diverged into the same direction (upwards or downwards)
@@ -2136,7 +2417,7 @@ def detect_divergence_2(t_arr, y_arr):
 
 def save_metadata(date, case_prefix, lengths, real_physical_varied_ranges, omega0_vals, planetary_system, interesting_runs, further_notes=None):
     # lengths is essentially (10, 10, 10)
-    file = open(f"data_storage/metadata_{case_prefix}_{date}.txt", "w")
+    file = open(f"data_storage/metadata_{case_prefix}_{further_notes.split(" ")[0]}_{date}.txt", "w")
 
     # Write a string to the file
     file.write(f"This is a run on the {date}\n")
@@ -2151,6 +2432,8 @@ def save_metadata(date, case_prefix, lengths, real_physical_varied_ranges, omega
     for name, normalization, physical_range, unit in zip(names, normalizations, real_physical_varied_ranges, units):
         file.write(name + "~" + str(physical_range/normalization))
         file.write(f"\t in units of {unit}.\n")
+
+    file.write("\n( AU = Earth-Sun-Distance, LU = Earth-Moon-Distance, SLU = 1/20 LU )\n")
 
     file.write("\n\n")
     file.write("The fixed initial values of Ω_s, Ω_p, Ω_m of this search are:\n")
@@ -2178,7 +2461,7 @@ def save_metadata(date, case_prefix, lengths, real_physical_varied_ranges, omega
             file.write("\t---\n")
         else:
             for el in events:
-                file.write(f"\t{el}\n")
+                file.write(f"\t{el},\n")
 
         file.write("\n")  # Add a blank line for better readability
 
@@ -2280,7 +2563,7 @@ def rerun_with_approximation(final_time, y_init, args, events, t_report):
         y0=y_init, method="Radau",
         args=(planetary_system, mu_m_sm, mu_p_m, mu_s_p),
         events=events,
-        rtol=1e-6,
+        rtol=1e-4,
         t_eval=t_report
         # jac=jacobian
     )
@@ -2349,12 +2632,26 @@ def interesting_sign_flip_occured():
         return False
 
 
+# SPACE FOR GLOBAL VARIABLES FOR CUSTOM ANALYSES
 
+# Initialize global tracker object
+tracker = Tracker()
+
+# Global testing variables. Here, I am trying to see whether the delta_t's in `handle_diverged_solution` grow with
+# total time or not.
+# If they do, this is a hint of some kind of systematic, which I should further think about: Update: They do not.
+t_arr_final = []  # the numeric final times of different iterations
+delta_t_arr_div = []  # The time differences between the divergences of numeric and analytic solution for each of those iters.
+num_steps_arr = []
+
+# Testing differences between sgn() and tanh(k()) model for non-stiff iterations by comparing end points of a_sm(t)
+last_points_a_sm_sgn_model = []
+last_points_a_sm_tanh_model = []
 
 def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y_init: list, planetary_system: list,
                        list_of_std_mus: list, use_initial_values=False, upper_lim_planet=30, lower_lim_planet=None,
                        debug_plot=False, further_notes = None, analyze_iter=False, specific_counter=None, case_prefix="",
-                       force_tanh_approx=False) -> list:
+                       force_tanh_approx=False, unequal_support=False) -> list:
     # noinspection StructuralWrap
     """
     The main function executing the numerical integration of the submoon system.
@@ -2417,6 +2714,11 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                         np.tanh differential equations are simulated too, independent of whether
                                         the np.sign DFEs solutions ended up stiff. Very useful for analysis
                                         of the difference between np.sign and np.tanh solutions.
+    :param unequal_support: bool,       If true, the sgn() and tanh() models use different support points in time.
+                                        Helpful if the oscillatory nature of some sgn() evolutions wants to be shown
+                                        since otherwise smooth interpolation is done. Note that if this is true,
+                                        the comparison between the tanh and sgn model will throw an error which is
+                                        catched and falsely alters the log messages in the terminal.
 
     :return:                   tuple,   Containing information objects for all iterations:
                                         results, lifetimes, termination_reason_counter, physically_varied_ranges
@@ -2427,28 +2729,28 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
     results = []  # contains strings "-1", "+1" and "NUM ER" for each iteration,
     # indicating success status of integration
     lifetimes = []
-    interesting_runs = {"tanh() model deviated early on from signum() model: ": [],
-                        "Sign flip in any quantity without being stiff: ": [],
+    interesting_runs = {"sgn() model is likely stiff": [],
+                        "sgn() model is not stiff":[],
+                        "sgn() model is not stiff and has non-trivial time evolution": [],
+                        "tanh() model turned out stiff as well": [],
+                        "tanh() model did not deviate early on from sgn() model": [],
+                        "tanh() model did deviate early on from sgn() model": [],
+                        "Sign flip in any quantity without being stiff": [],
                         "Submoon fell under roche limit": [],
-                        "Submoon exceeded a_crit": [],
                         "Moon fell under roche limit": [],
+                        "Planet fell under roche limit": [],
+                        "Submoon exceeded a_crit": [],
                         "Moon exceeded a_crit": [],
-                        "Bad initial values input": [],
-                        "None": [],
-                        "Some roche limit was greater than a_crit": [],
-                        "Some initial value was under the roche or over the a_crit limit": [],
-                        "Iteration is likely to be stiff": [],
                         }
     termination_reason_counter = {"Submoon fell under roche limit": 0,
-                                  "Submoon exceeded a_crit": 0,
                                   "Moon fell under roche limit": 0,
+                                  "Planet fell under roche limit": 0,
+                                  "Submoon exceeded a_crit": 0,
                                   "Moon exceeded a_crit": 0,
-                                  "Bad initial values input": 0,
-                                  "None": 0,
-                                  "Some roche limit was greater than a_crit": 0,
-                                  "Some initial value was under the roche or over the a_crit limit": 0,
+                                  "Bad initial values I": 0,
+                                  "Bad initial values II": 0,
                                   "No termination event occurred.": 0,
-                                  "Iteration is likely to be stiff": 0,
+                                  "sgn() model is likely stiff": 0,
                                   }
 
     solve_ivp_iterator_console_logger(planetary_system, mode=0)
@@ -2539,26 +2841,24 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
                 except InitialValuesOutsideOfLimits as er:
                     lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
-                                      "Some initial value was under the roche or over the a_crit limit",
-                                      None, tracker.get_sign_changes()])  # See docstring for explanation
+                                      "Bad initial values I", None, tracker.get_sign_changes()])  # See docstring for explanation
                     premature_termination_logger(er)
-                    termination_reason_counter["Some initial value was under the roche or over the a_crit limit"] += 1
+                    termination_reason_counter["Bad initial values I"] += 1
                     results.append("-1")
                     continue  # Continue to the next j iteration
 
                 except RocheLimitGreaterThanCriticalSemiMajor as er:
                     lifetimes.append([(outer_counter, middle_counter, inner_counter), 0, y_init, None,
-                                      "Some roche limit was greater than a_crit",
+                                      "Bad initial values II",
                                       None, tracker.get_sign_changes()])
                     results.append("-1")
                     lifetimes.extend([[(outer_counter, middle_counter, sm_pix), 0, y_init, None,
-                                       "Some roche limit was greater than a_crit", None, tracker.get_sign_changes()]
-                                      for sm_pix in range(inner_counter + 1, n_pix_submoon + 1)])  # Skip all other
-                    # iterations as well
+                                       "Bad initial values II", None, tracker.get_sign_changes()]
+                                      for sm_pix in range(inner_counter + 1, n_pix_submoon + 1)])
                     results.extend(["-1"] * len(list(range(inner_counter + 1, n_pix_submoon + 1))))
                     premature_termination_logger(er)
-                    termination_reason_counter["Some roche limit was greater than a_crit"] += 1
-                    break  # Break all of the k iterations and continue to the next j iteration, which
+                    termination_reason_counter["Bad initial values II"] += n_pix_moon
+                    break  # Break all the subsequent k iterations and continue to the next j iteration, which
                     # completely determines the value of the roche limit and critical semi-major-axis.
                     # In that case, the j-loop (moon-loop) cannot ever host a stable submoon (k-loop) and in that case
                     # we should also fill in the rest of the k-loop as unstable after breaking it.
@@ -2568,14 +2868,18 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                                                use_initial_values=use_initial_values, verbose=False)
 
                 # define events to track and values to update and a list describing the events
-                list_of_all_events = [update_values, track_sm_m_axis_1, track_sm_m_axis_2,
+                list_of_all_events = [update_values, track_p_s_axis_1, track_sm_m_axis_1, track_sm_m_axis_2,
                                       track_m_p_axis_1, track_m_p_axis_2, check_if_stiff]
-                keys = ["Values were updated.", "Submoon fell under roche limit", "Submoon exceeded a_crit",
-                        "Moon fell under roche limit", "Moon exceeded a_crit", "Iteration is likely to be stiff"]
+                keys = ["Values were updated.", "Planet fell under roche limit","Submoon fell under roche limit",
+                        "Submoon exceeded a_crit", "Moon fell under roche limit", "Moon exceeded a_crit",
+                        "sgn() model is likely stiff"]
 
                 # evolve to 4.5 Bn. years
                 final_time = turn_billion_years_into_seconds(4.5)
-                celestial_time = np.linspace(0, final_time, int(1e5))
+                if unequal_support:
+                    celestial_time = None
+                else:
+                    celestial_time = np.linspace(0, final_time, int(1e5))
 
                 # Unpack standard gravitational parameters
                 mu_m_sm, mu_p_m, mu_s_p = list_of_std_mus
@@ -2598,17 +2902,25 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                 time_points, sol, t_events, _, _, _, _, status, message, success = unpack_solve_ivp_object(sol_object)
                 y_final = sol[:, -1]
 
+                # last_points_a_sm_sgn_model.append(y_final[0])
+
+                # y_submoon_sgn_normed = sol[0, :]/moon.R
+                # t_submoon_sgn = time_points
+                # np.savetxt("data_storage/arrays/run_783_sgn_model_a_sm_normed_uneven_points.txt", (t_submoon_sgn, y_submoon_sgn_normed),
+                #            header=f"The y (a_sm) array is normed by the moon radius {moon.R} (m)")
+
                 # If termination event occurred, find termination reason
                 termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
                 termination_reason_old = termination_reason
 
                 # Manual override to force tanh iteration for each iteration (pickle objects called "Gamma")
                 if force_tanh_approx:
-                    termination_reason = "Iteration is likely to be stiff"
+                    termination_reason = "sgn() model is likely stiff"
 
-                if termination_reason == "Iteration is likely to be stiff":
+                if termination_reason == "sgn() model is likely stiff":
+                    interesting_runs["sgn() model is likely stiff"].extend([identifier])
                     analytical_check_possibly_applicable = False
-                    print("\t\tIteration is likely to be stiff, rerunning with hyperbolic tangent approximation.")
+                    print("\t\tsgn() model is likely stiff, rerunning with hyperbolic tangent approximation.")
                     # Rename old values
                     (time_points_old, y_final_old, sol_old, t_events_old, status_old, message_old, success_old,
                      sol_object_old) = \
@@ -2625,17 +2937,28 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
                     time_points, sol, t_events, _, _, _, _, status, message, success = unpack_solve_ivp_object(sol_object)
                     y_final = sol[:, -1]
+                    # y_submoon_tanh_normed = sol[0, :] / moon.R
+                    # t_submoon_tanh = time_points
+                    # np.savetxt("data_storage/arrays/run_783_tanh_model_a_sm_normed_even_points.txt",
+                    #             (t_submoon_tanh, y_submoon_tanh_normed),
+                    #             header=f"The y (a_sm) array is normed by the moon radius {moon.R} (m)")
+
+                    # last_points_a_sm_tanh_model.append(y_final[0])
 
                     old_state = (time_points_old, sol_old, submoon_system_derivative)
                     termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
-                    if termination_reason == "Iteration is likely to be stiff":
+                    if termination_reason == "sgn() model is likely stiff":
+                        interesting_runs["tanh() model turned out stiff as well"].extend([identifier])
                         # NOTE: Check whether stiffness detection was removed in the rerun.
                         print("\t\tRerun with hyperbolic approximation ended up stiff as well. Plotting disabled.")
                         # plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
 
                     try:
                         check_quality_of_approximation(sol, sol_old)
+                        interesting_runs["tanh() model did not deviate early on from sgn() model"].extend([identifier])
                     except ValueError:
+
+                        interesting_runs["tanh() model did deviate early on from sgn() model"].extend([identifier])
 
                         enable_plot = False
                         if enable_plot:
@@ -2652,38 +2975,38 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                                 # Else will get plotted twice
                                 plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
 
-                        if analyze_iter:
-                            print("`analyze_iter` has been set and tanh approximation kicked in. Plotting np.sign (purple)\n "
-                                  "and np.tanh solutions (multicolor), before reverting back to old solution object.")
-                            plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
+                        uncomment_when_finished = True
+                        # if analyze_iter:
+                        #    print("`analyze_iter` has been set and tanh approximation kicked in. Plotting np.sign (purple)\n "
+                        #          "and np.tanh solutions (multicolor).")
+                        #    plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
 
-                        # Approximation not good enough => revert back to stiff solution object
-                        time_points, sol, t_events, status, message, success, y_final, sol_object = \
-                            (time_points_old, sol_old, t_events_old, status_old, message_old, success_old, y_final_old, sol_object_old)
-                        termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
-                        print( "\t\t! Reverting back to old solution object (without tanh approximation). !")
-
-                        interesting_runs["tanh() model deviated early on from signum() model: "].extend([identifier])
+                        # NOT reverting back to old, stiff solution object if large deviation has been detected.
+                        # time_points, sol, t_events, status, message, success, y_final, sol_object = \
+                        #     (time_points_old, sol_old, t_events_old, status_old, message_old, success_old, y_final_old, sol_object_old)
+                        # termination_reason = find_termination_reason(status=status, t_events=t_events, keys=keys)
+                        # print( "\t\t! Reverting back to old solution object (without tanh approximation). !")
 
                     if analyze_iter:
                         # Even if solution passed quality inspection, plot tanh - sgn evolutions
                         print("\tPlotting sgn-tanh general comparison.")
                         plt_results(sol_object, planetary_system, list_of_std_mus, old_state=old_state)
 
+                else:
+                    interesting_runs["sgn() model is not stiff"].extend([identifier])
+                    if interesting_sign_flip_occured():
+                        interesting_runs["Sign flip in any quantity without being stiff"].extend([identifier])
+                    if len(time_points) > 5:
+                        interesting_runs["sgn() model is not stiff and has non-trivial time evolution"].extend([identifier])
 
 
 
-                control_counter = (None, None, None)
-                if analyze_iter and termination_reason != "Iteration is likely to be stiff":
+                if analyze_iter and termination_reason_old != "sgn() model is likely stiff":
                     # If termination reason was stiff, plot has already been constructed
                     control_counter = specific_counter
                     construct_debug_plot(debug=debug_plot, idc=identifier, cc=control_counter, plot_dt_systematics=True,
                                          rest=(time_points, sol, sol_object, y_init, planetary_system, list_of_std_mus),
                                          plot_derivatives=False)
-
-
-                if interesting_sign_flip_occured():
-                    interesting_runs["Sign flip in any quantity without being stiff: "].extend([identifier])
 
                 # Numerical solution sanity-check I
                 sanity_check_tot_ang_momentum_evolution(mu_m_sm=mu_m_sm, mu_p_m=mu_p_m, mu_s_p=mu_s_p,
@@ -2720,10 +3043,20 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
     if not analyze_iter:
         now = datetime.datetime.now()
         pickle_me_this(
-            f'data_storage/{case_prefix}_integration_{now}', data)
+            f'data_storage/{case_prefix}_integration_{further_notes.split(" ")[0]}_{now}', data)
 
         save_metadata(now, case_prefix,(n_pix_planet, n_pix_moon, n_pix_submoon), physically_varied_ranges,
                       y_init[-3:], planetary_system, interesting_runs, further_notes)
+
+    # relative_differences = np.array([(a-b)/a for a,b in zip(last_points_a_sm_sgn_model, last_points_a_sm_tanh_model)])
+    # average_relative_difference = np.mean(relative_differences)
+    # idcs_of_large_rel_differences = np.where(relative_differences > 0.1)
+    # print("\n\n\nRan over ", len(last_points_a_sm_sgn_model), " non-trivial, non-stiff iterations where we can "
+    #                                                           "compare the full sgn solution to the full tanh solution")
+    # print("array of rel differnecs; ", relative_differences)
+    # print("Avg relative difference: ", average_relative_difference)
+    # print("Idcs where rel. difference was larger than 10%: ", idcs_of_large_rel_differences)
+    # print("Relative differences larger than 10%: ", relative_differences[idcs_of_large_rel_differences])
 
     return data
 

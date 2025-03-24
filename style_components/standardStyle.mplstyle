@@ -10,7 +10,7 @@ axes.labelweight: bold
 
 # Lines
 lines.marker: .         # Marker style
-lines.markersize: 8     # Marker size
+lines.markersize: 0     # Default Marker size
 lines.color: blue       # Line color
 
 # Fonts
