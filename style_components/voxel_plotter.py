@@ -65,31 +65,32 @@ def plot_3d_voxels_initial_states(data_solved, data_unsolved, save=False, filena
 
     if system == "earth_like":
         print("The system is earth like, plotting the real earth system.")
-        descr = "Approximate position of Earth-System"
+        descr = "Earth"
         real_sys_x = earth_distance
         real_sys_y = luna_distance
     else:
         print("The system is warm jupiter like, plotting the Kepler1625b system.")
-        descr = "Approximate position of Kepler1625b"
+        descr = "Kepler1625b"
         real_sys_x = kepler1625b_planet_distance
         real_sys_y = hypothesized_moon_distance
 
     # REAL SYSTEM
     draw_beam(ax_main, x_center=real_sys_x, y_center=real_sys_y, z_min=0, z_max=max(Z_merge),
-              step_x = 0.1, step_y=10, alpha=1, color="lightgreen")
+              step_x = 0.05, step_y=5, alpha=1, color="lightgreen")
 
     ax_main.set_zlim(0, max(Z_sol))  # Adjust max_z_value as needed
 
-    ax_main.text(x=0, y=0, z=max(Z_merge) + 1, s=descr, color='darkgreen',
-                 fontsize=12, ha='center', va='bottom')
+    ax_main.text(x=real_sys_x, y=real_sys_y, z=max(Z_merge) + 3, s=descr, color='darkgreen',
+                 fontsize=16, ha='center', va='bottom')
 
-    cbar = fig.colorbar(p, ax=ax_main, pad=0.2, fraction=0.03)  # Add colorbar
-    cbar.set_label(r"Lifetime $[4.5\mathrm{Gyr}]$", fontsize=22, labelpad=22)
-    plt.title("Initial states")
+    # cbar = fig.colorbar(p, ax=ax_main, pad=0.2, fraction=0.03)  # Add colorbar
+    # cbar.set_label(r"Lifetime $[4.5\mathrm{Gyr}]$", fontsize=22, labelpad=22)
+    # plt.title("Initial states, "+r"$m_{\mathrm{sm}}=10^{15}\mathrm{kg}$", pad=1)
+    plt.tight_layout()
     if save:
         if filename is None:
             raise ValueError("Provide filename")
-        plt.savefig("data_storage/figures/"+filename)
+        plt.savefig("data_storage/figures/"+filename, bbox_inches='tight', pad_inches=0.1)
     if plot:
         plt.show()
     else:
@@ -228,7 +229,7 @@ def plot_3d_voxels_final_states(data, save=False, filename=None, plot=True, syst
     X_sol, Y_sol, Z_sol, values_sol = data
 
     copy_X, copy_Y, copy_Z, copy_val_sols= [np.array(arr) for arr in [X_sol, Y_sol, Z_sol, values_sol]]
-    idcs = np.where((copy_X < 1.5) & (copy_val_sols > 0.5))[0]
+    idcs = np.where((copy_X < 1.3) & (copy_val_sols > 0.4) & (copy_Y < 70))[0]
     for idx in idcs:
         print("At ", X_sol[idx], Y_sol[idx], Z_sol[idx], " we have f  = ", values_sol[idx])
 
@@ -236,7 +237,7 @@ def plot_3d_voxels_final_states(data, save=False, filename=None, plot=True, syst
     fig = plt.figure(figsize=(12, 8))
     ax_main = plt.subplot(111, projection='3d')
     # ax_main.view_init(30, 340)
-    ax_main.view_init(17, -74)
+    ax_main.view_init(27, -66)
 
 
 
@@ -272,31 +273,40 @@ def plot_3d_voxels_final_states(data, save=False, filename=None, plot=True, syst
 
     if system == "earth_like":
         print("The system is earth like, plotting the real earth system.")
-        descr = "Approximate position of Earth-System"
+        descr = "Earth"
         real_sys_x = earth_distance
         real_sys_y = luna_distance
     else:
         print("The system is warm jupiter like, plotting real Kepler1625b. ")
-        descr = "Approximate position of Kepler1625b"
+        descr = "Kepler1625b"
         real_sys_x = kepler1625b_planet_distance
         real_sys_y = hypothesized_moon_distance
 
     # REAL EARTH SYSTEM
     draw_beam(ax_main, x_center=real_sys_x, y_center=real_sys_y, z_min=0, z_max=max(Z_sol),
-              step_x=0.1, step_y=10, alpha=1, color="lightgreen")
+              step_x=0.05, step_y=5, alpha=1, color="lightgreen")
 
     ax_main.set_zlim(0, max(Z_sol))  # Adjust max_z_value as needed
 
-    ax_main.text(x=0, y=0, z=max(Z_sol) + 1, s=descr, color='darkgreen',
-                 fontsize=12, ha='center', va='bottom')
+
+
+    ax_main.text(x=real_sys_x, y=real_sys_y, z=max(Z_sol) + 3, s=descr, color='darkgreen',
+                 fontsize=16, ha='center', va='bottom')
+
+    # submoon_mass_text = r"$m_{\mathrm{sm}}=10^{15}\mathrm{kg}$"
+    # ax_main.text(x=3, y=-150, z=-5, s=submoon_mass_text, color='black',
+    #              fontsize=22, ha='center', va='bottom')
 
     cbar = fig.colorbar(p, ax=ax_main, pad=0.1, fraction=0.03)  # Add colorbar
     cbar.set_label(r"Lifetime $[4.5\mathrm{Gyr}]$", fontsize=22, labelpad=22)
-    plt.title("Evolved states")
+    # plt.title("Evolved states, "+r"$m_{\mathrm{sm}}=10^{15}\mathrm{kg}$")
+    # s = "Evolved states, "+r"$m_{\mathrm{sm}}=10^{15}\mathrm{kg}$"
+    # ax_main.text(x=0, y=max(Y_sol), z=max(Z_sol)+10, s=s, color='black', fontsize=25, ha='center', va='bottom')
+    plt.tight_layout()
     if save:
         if filename is None:
             raise ValueError("Provide filename")
-        plt.savefig("data_storage/figures/"+filename)
+        plt.savefig("data_storage/figures/"+filename, bbox_inches='tight', pad_inches=0.1)
     if plot:
         plt.show()
     else:

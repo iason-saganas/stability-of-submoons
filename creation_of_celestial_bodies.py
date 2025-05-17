@@ -109,8 +109,12 @@ def create_earth_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_
                          hierarchy_number=3, hosting_body=earth)
 
     # submoon_mass = 0.01 * luna_d.m  # 1% of the lunar mass
-    submoon_mass = 0.1 * luna_d.m  # 10% of the lunar mass
-    # submoon_mass = 4.2e15  # this is the test mass used by Kollmeier & Raymond
+    # submoon_mass = 0.1 * luna_d.m  # 10% of the lunar mass
+    # submoon_mass = 1e15  # this is the test mass used by Kollmeier & Raymond
+    submoon_mass = 460 * 1e15  # this is the maximum stable mass found by Kollmeier & Raymond
+
+    exploration_fac = 1
+    submoon_mass *= exploration_fac
 
     submoon = CelestialBody(mass=submoon_mass, density=submoon_d.rho, semi_major_axis=submoon_d.a,
                             spin_frequency=spin_frequency_submoon, love_number=0.25,
@@ -163,7 +167,7 @@ def create_earth_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_
 
 
 
-def create_warm_jupiter_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_HOURS):
+def create_warm_jupiter_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_rot_moon_HOURS, custom_sm_mass=None):
     """
     Mimicks the first system in which an exomoon might have been found, Kepler-1625b, see paper
     https://arxiv.org/pdf/1810.02362 .
@@ -240,15 +244,33 @@ def create_warm_jupiter_submoon_system(P_rot_star_DAYS, P_rot_planet_HOURS, P_ro
                          quality_factor=5000, descriptive_index="m", name="moon",
                          hierarchy_number=3, hosting_body=planet)
 
-    submoon_mass = 0.1 * moon.mass
+    earth_mass = 5.972e24  # in kg
+    lunar_mass = 7.34e22  # in kg
+    submoon_mass = 0.5 * earth_mass
+    # submoon_mass = 0.1 * moon.mass
     # submoon_mass = submoon_d.m/2.1/20
     # submoon_mass = 4.2e15  # this is the test mass used by Kollmeier & Raymond
     # submoon_mass = .25 * submoon_d.m  # 25% of the lunar mass
     # submoon_mass = 1e-200
     # submoon_mass = 1/3 * 6.39e23  # A third of mars' mass!
-    submoon = CelestialBody(mass=submoon_mass, density=submoon_d.rho, semi_major_axis=submoon_d.a,
-                            spin_frequency=spin_frequency_submoon, love_number=0.25,
-                            quality_factor=100, descriptive_index="sm", name="submoon",
+
+    if submoon_mass >= 0.5*earth_mass:
+        # Earth like properties
+        sm_density = earth_d.rho
+        sm_love_number = 0.3
+        sm_quality_factor = 280
+    else:
+        # asteroid like properties
+        sm_density = submoon_d.rho
+        sm_love_number = 0.25
+        sm_quality_factor = 100
+
+    if custom_sm_mass is not None:
+        submoon_mass = custom_sm_mass
+
+    submoon = CelestialBody(mass=submoon_mass, density=sm_density, semi_major_axis=submoon_d.a,
+                            spin_frequency=spin_frequency_submoon, love_number=sm_love_number,
+                            quality_factor=sm_quality_factor, descriptive_index="sm", name="submoon",
                             hierarchy_number=4, hosting_body=moon)
 
 

@@ -55,37 +55,74 @@ else:
     raise ValueError
 
 
-# Construct the base system, don't forget to change the `case_prefix` variable!
-star, planet, moon, submoon = create_warm_jupiter_submoon_system(P_rot_star_DAYS=star_rot_period_days,
-                                                          P_rot_planet_HOURS=planet_rot_period_hours,
-                                                          P_rot_moon_HOURS=moon_rot_period_hours)
-# case_prefix = "earth_like"
-case_prefix = "warm_jupiter_like"
+arr = []
+earth_mass = 5.972e24  # in kg
 
-# Get standard gravitational
-# parameters to input into the differential equations
-mu_m_sm = get_standard_grav_parameter(hosting_body=moon, hosted_body=submoon, check_direct_orbits=False)
-mu_p_m = get_standard_grav_parameter(hosting_body=planet, hosted_body=moon, check_direct_orbits=False)
-mu_s_p = get_standard_grav_parameter(hosting_body=star, hosted_body=planet, check_direct_orbits=False)
+# sm_masses = np.linspace(2, 10, 10)*earth_mass
+
+# Logarithmic regime
+log_part = np.logspace(-5, -1, 15)  # More points in this range
+
+# Linear regime
+linear_part = np.linspace(10**-2, 1, 5)  # Starts from ~10^-2
+
+# Merge the arrays
+sm_masses = np.concatenate((log_part, linear_part))*earth_mass  # test multiple masses
+
+# test the default mass instead
+# sm_masses = [None]
+
+for sm_mass in sm_masses:
+
+    print("Checking submoon mass ", sm_mass, " if `None` -> Default")
+
+    # Construct the base system, don't forget to change the `case_prefix` variable!
+    star, planet, moon, submoon = create_warm_jupiter_submoon_system(P_rot_star_DAYS=star_rot_period_days,
+                                                              P_rot_planet_HOURS=planet_rot_period_hours,
+                                                              P_rot_moon_HOURS=moon_rot_period_hours,
+                                                                     custom_sm_mass=sm_mass)
+    # case_prefix = "earth_like"
+    case_prefix = "warm_jupiter_like"
+
+    # Get standard gravitational
+    # parameters to input into the differential equations
+    mu_m_sm = get_standard_grav_parameter(hosting_body=moon, hosted_body=submoon, check_direct_orbits=False)
+    mu_p_m = get_standard_grav_parameter(hosting_body=planet, hosted_body=moon, check_direct_orbits=False)
+    mu_s_p = get_standard_grav_parameter(hosting_body=star, hosted_body=planet, check_direct_orbits=False)
 
 
-# The values of the semi-major-axes of the planet, moon and submoon are updated dynamically in each iteration.
-# Order
-# [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega],
-PLACEHOLDER = None
-y_init = [PLACEHOLDER, PLACEHOLDER, PLACEHOLDER, moon.omega, planet.omega, star.omega]
+    # The values of the semi-major-axes of the planet, moon and submoon are updated dynamically in each iteration.
+    # Order
+    # [submoon.a, moon.a, planet.a, moon.omega, planet.omega, star.omega],
+    PLACEHOLDER = None
+    y_init = [PLACEHOLDER, PLACEHOLDER, PLACEHOLDER, moon.omega, planet.omega, star.omega]
 
-n_pix_planet = 10
-n_pix_moon = 10
-n_pix_submoon = 10
+    n_pix_planet = 7
+    n_pix_moon = 7
+    n_pix_submoon = 7
 
-# Set the resolution, i.e., how many simulations to do and other parameters of the simulation
-result = solve_ivp_iterator(n_pix_planet=n_pix_planet, n_pix_moon=n_pix_moon, n_pix_submoon=n_pix_submoon,
-                            y_init=y_init, planetary_system=[star, planet, moon, submoon], debug_plot=False,
-                            list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p], upper_lim_planet=5, lower_lim_planet=None,
-                            case_prefix=case_prefix, further_notes=case+case_descr,
-                            analyze_iter=False, specific_counter=None, force_tanh_approx=False, unequal_support=False)
-#
-#
+
+    # test_cases = [(2, 2, 2),
+	# (2, 2, 3),
+	# (2, 2, 4),
+    # ]
+
+    # for tc in test_cases:
+
+    # Set the resolution, i.e., how many simulations to do and other parameters of the simulation
+    result = solve_ivp_iterator(n_pix_planet=n_pix_planet, n_pix_moon=n_pix_moon, n_pix_submoon=n_pix_submoon,
+                                y_init=y_init, planetary_system=[star, planet, moon, submoon], debug_plot=False,
+                                list_of_std_mus=[mu_m_sm, mu_p_m, mu_s_p], upper_lim_planet=3, lower_lim_planet=None,
+                                case_prefix=case_prefix, further_notes=case+case_descr,
+                                analyze_iter=False, specific_counter=None, force_tanh_approx=False, unequal_support=False)
+
+    arr.append(find_fraction_of_stable_iterations(result))
+
+
+arr = np.array(arr)
+print("Mass array in Earth masses: ", sm_masses/earth_mass)
+print("Resulting stable iterations: ", arr)
+np.savetxt("data_storage/arrays/stable_iteration_fraction_submoon_mass_variation.txt", arr)
+
 # showcase_results(result, suppress_text=False, plot_initial_states=True, plot_final_states=True,
-#                   save=False, filename=case)
+#                   save=False, filename=case, earth_like=False)

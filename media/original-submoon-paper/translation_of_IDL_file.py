@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 # A system will be stable if the known satellites (black points in the plot) are found to the right of the thick
 # solid lines.
 
-submoon_radii_km = [5, 10, 20, 40, 200]  # example submoon radii in km
+submoon_radii_km = [5, 10, 20, 38, 200, 9000]  # example submoon radii in km
 
 # -------------------------
 # 1) Define constants (CGS)
@@ -96,12 +96,17 @@ moon_data = read_moon_data("satellites_all.txt")
 #    (e.g. 5 km, 10 km, 20 km, etc.)
 # ----------------------------------------
 rho_submoon = 2.0  # g/cm^3 for submoon
+M_earth = 1.67442e25
 submoon_radii = np.array(submoon_radii_km) * 1e5  # convert km to cm
 submoon_masses = (4.0 / 3.0) * np.pi * rho_submoon * (submoon_radii ** 3)
 
 print("Submoon masses corresponding to radii (km) ", submoon_radii_km, " : ")
 M_lunar = 7.346e22
-print([float((4/3 * r**3 * np.pi * rho_submoon)/1e3/M_lunar) for r in submoon_radii], " lunar masses.")
+masses = [float((4/3 * r**3 * np.pi * rho_submoon)/1e3/M_lunar) for r in submoon_radii]
+print(masses, " lunar masses \n or in absolutes:\n")
+print([mass * M_lunar/1e15 for mass in masses], " (1e15 kg) or \n")
+print([mass * M_lunar/M_earth for mass in masses], " (earth masses) ")
+
 
 # ----------------------------------------
 # 4) Define a range of Rmoon to test

@@ -1,5 +1,5 @@
 # Figure
-figure.figsize: 10, 6    # Figure size in inches (width, height)
+figure.figsize: 5, 3    # Figure size in inches (width, height)
 figure.dpi: 100         # Dots per inch
 
 # Axes
@@ -30,6 +30,6 @@ xtick.minor.size: 4       # Length of minor ticks on x-axis
 ytick.minor.size: 4       # Length of minor ticks on y-axis
 
 # Other
-savefig.dpi: 300          # DPI when saving figures
+savefig.dpi: 100          # DPI when saving figures
 savefig.format: png     # File format when saving figures ('png', 'pdf', 'svg', etc.)
 text.usetex: True

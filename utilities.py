@@ -44,7 +44,7 @@ __all__ = ['check_if_direct_orbits', 'keplers_law_n_from_a', 'keplers_law_a_from
            'turn_billion_years_into_seconds', 'bind_system_gravitationally', 'state_vector_plot',
            'submoon_system_derivative', 'update_values', 'track_sm_m_axis_1', 'track_sm_m_axis_2',
            'track_m_p_axis_1', 'track_m_p_axis_2', 'reset_to_default', 'solve_ivp_iterator', 'showcase_results',
-           'pickle_me_this', 'unpickle_me_this']
+           'pickle_me_this', 'unpickle_me_this', 'find_fraction_of_stable_iterations']
 
 
 # noinspection StructuralWrap
@@ -1482,9 +1482,9 @@ def sanity_check_initial_values(a_sm_0: float, a_m_0: float, a_p_0: float, plane
     a_sm_crit = submoon.get_current_critical_sm_axis()
 
     # Order: submoon, moon, planet
-    list_a_crit = [a_sm_0 / a_sm_crit, a_m_0 / a_m_crit,
-                   .5]  # Checking that initial sm.axis are not already above critical
-    # sm. axis. The .5 was: a_p_0/a_p_crit. See comment at a_p_crit.
+    list_a_crit = [a_sm_0 / a_sm_crit, a_m_0 / a_m_crit, .5]  # Checking that initial sm.axis are not already above critical
+    # sm. axis. The .5 was a_p_0/a_p_crit before. See comment at a_p_crit.
+
     list_r_lim = [r_sm_l / a_sm_0, r_m_l / a_m_0,
                   r_p_l / a_p_0]  # Checking that initial sm.axis are not already under roche
     # limit
@@ -1508,7 +1508,7 @@ def sanity_check_initial_values(a_sm_0: float, a_m_0: float, a_p_0: float, plane
     for index, val in enumerate(list_r_lim):
         if val > 1:
             raise InitialValuesOutsideOfLimits(
-                f'\t\tA priori ratio of initial semi-major-axis of {names[index]} and its parent bodys '
+                f'\t\tA priori ratio of initial semi-major-axis of {names[index]} and its'
                 f'roche limit bigger than one: {val}')
 
 
@@ -1847,6 +1847,31 @@ def print_final_data_object_information(hits, computation_time, termination_reas
     print(lifetimes[index_of_longest_lifetime_array][:5])
 
 
+def find_fraction_of_stable_iterations(data, old=False):
+    # Set old to True if stiff iterations are saved under 'Iteration is likely to be stiff' rather than
+    # 'sgn() model is likely stiff'
+    # This function assumes a lifetime of 4.5Gyrs.
+    hits, termination_reason_counter, lifetimes, physically_varied_ranges, computation_time = data
+
+    norm = 4.5e9
+
+    from collections import defaultdict
+
+    # Turn  `hits` array into `hits` dict to print more easily
+    hit_counts = defaultdict(int)
+    for hit in hits:
+        hit_counts[hit] += 1
+
+    lts = np.array([lifetime[1] for lifetime in lifetimes]) / norm
+    if old:
+        stiffs = termination_reason_counter["Iteration is likely to be stiff"]
+    else:
+        stiffs = termination_reason_counter["sgn() model is likely stiff"]
+    quo = np.round(100 * np.count_nonzero(lts == 1) / (len(lts) - stiffs), 2)
+
+    return quo
+
+
 def showcase_results(data, plot_initial_states=False, suppress_text=True, plot_final_states=True, save=False, filename=None,
                      old = False, earth_like=False):
     """
@@ -2059,6 +2084,26 @@ def jacobian(t, y, *args):
     return jac
 
 
+def check_interesting_evolutions(y_state_vector_evolution, interesting_runs_dict, id):
+    # check for non-trivial solution in a_m or a_p
+    if len(y_state_vector_evolution) > 1:
+        a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = [y_state_vector_evolution[:, i] for i in range(6)]
+
+        max_a_m = np.max(np.abs(a_p_m))
+        max_a_p = np.max(np.abs(a_s_p))
+
+        min_a_m = np.min(np.abs(a_p_m))
+        min_a_p = np.min(np.abs(a_s_p))
+
+        res_1 = np.abs(max_a_m-min_a_m)/max_a_m
+        res_2 = np.abs(max_a_p-min_a_p)/max_a_p
+
+        if res_1 > 0.01:
+            interesting_runs_dict["a_m non-trivial evolution"].extend([id])
+        if res_2 > 0.01:
+            interesting_runs_dict["a_p non-trivial evolution"].extend([id])
+
+
 def calculate_angular_momentum(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_state_vector_evolution):
     """
     :param planetary_system:
@@ -2070,8 +2115,8 @@ def calculate_angular_momentum(planetary_system, mu_m_sm, mu_p_m, mu_s_p, y_stat
     """
 
     total_angular_momentum_evolution = []
+    star, planet, moon, submoon = planetary_system
     for column in y_state_vector_evolution:
-        star, planet, moon, submoon = planetary_system
         a_m_sm, a_p_m, a_s_p, omega_m, omega_p, omega_s = column
 
         n_m_sm = keplers_law_n_from_a_simple(a_m_sm, mu_m_sm)
@@ -2488,7 +2533,7 @@ def construct_debug_plot(debug, idc, cc, plot_dt_systematics, rest, plot_derivat
 
     :return:
     """
-    print("tracker.get_sign_changes()", tracker.get_sign_changes())
+    print("\t\ttracker.get_sign_changes()", tracker.get_sign_changes())
     if idc == cc and debug:
         print("\t\tConstructing debug plot at self set iteration.")
         time_points, sol, sol_object, y_init, planetary_system, list_of_std_mus = rest
@@ -2741,6 +2786,8 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                         "Planet fell under roche limit": [],
                         "Submoon exceeded a_crit": [],
                         "Moon exceeded a_crit": [],
+                        "a_p non-trivial evolution": [],
+                        "a_m non-trivial evolution": []
                         }
     termination_reason_counter = {"Submoon fell under roche limit": 0,
                                   "Moon fell under roche limit": 0,
@@ -2827,6 +2874,9 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                 y_init[0] = k
                 submoon.update_semi_major_axis_a(k)
 
+                print("SUBMOON A_CRIT VS ROCHE LIMIT ", submoon.get_current_critical_sm_axis(), submoon.get_current_roche_limit())
+                print("Current moon axis: ( ~ submoon acrit)", moon.a)
+
                 # Log some more stuff.
                 solve_ivp_iterator_console_logger(planetary_system, mode=1, current_y_init=y_init,
                                                   upper_lim_out=upper_lim_out, upper_lim_middle=upper_lim_middle,
@@ -2835,8 +2885,10 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
 
                 # Sanity-check that e.g., roche limit is not bigger than critical-semi-major axis etc. (bad input).
                 try:
-                    sanity_check_initial_values(a_sm_0=y_init[0], a_m_0=y_init[1], a_p_0=y_init[2],
-                                                planetary_system=planetary_system)
+                    # if not analyze_iter:
+                    #     # If `analyze_iter` all these checks have been done before
+                        sanity_check_initial_values(a_sm_0=y_init[0], a_m_0=y_init[1], a_p_0=y_init[2],
+                                                    planetary_system=planetary_system)
 
 
                 except InitialValuesOutsideOfLimits as er:
@@ -3018,6 +3070,9 @@ def solve_ivp_iterator(n_pix_planet: int, n_pix_moon: int, n_pix_submoon: int, y
                     sanity_check_with_analytical_sol_if_possible(mu_m_sm=mu_m_sm, mu_p_m=mu_p_m, mu_s_p=mu_s_p,
                                                                  planetary_system=planetary_system,
                                                                  y_state_vector_evolution=sol.T, time_points=time_points)
+
+                # Find markers of interesting evolutions
+                check_interesting_evolutions(sol.T, interesting_runs, identifier)
 
                 # Document results
                 document_result(status=status, termination_reason=termination_reason, time_points=time_points,
