@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # This is a translation of Sean Raymond's original IDL-file `mass_planet.pro` into python3
-# done by ChatGPT and afterward inspected by a human
+# done by ChatGPT and afterward inspected and validated by a human
 
 # Edit the variable `submoon_radii_km` to test out higher submoon masses in the system
 # A system will be stable if the known satellites (black points in the plot) are found to the right of the thick
